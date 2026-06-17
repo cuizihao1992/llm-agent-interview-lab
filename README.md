@@ -41,6 +41,23 @@ llm-agent-interview-lab/
 4. 增加面试问答训练数据，构建本地 RAG 问答 Demo。
 5. 做长上下文实验，对比“全量上下文”和“RAG 召回后精读”的成本、延迟、准确率。
 
+## GitHub Pages
+
+项目包含一个静态知识页面，源码在 [site](site)。
+
+部署方式：
+
+1. 推送到 `main` 分支。
+2. 在 GitHub 仓库进入 `Settings -> Pages`。
+3. `Build and deployment` 的 `Source` 选择 `GitHub Actions`。
+4. 等待 `Deploy GitHub Pages` 工作流完成。
+
+部署后页面地址通常是：
+
+```text
+https://cuizihao1992.github.io/llm-agent-interview-lab/
+```
+
 ## 快速开始
 
 当前版本以文档和代码骨架为主，暂未绑定具体模型或向量数据库。
