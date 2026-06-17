@@ -1,0 +1,17 @@
+# RAG pipeline configuration placeholder.
+
+chunking:
+  strategy: semantic
+  chunk_size: 500
+  overlap_ratio: 0.15
+  parent_child: true
+
+retrieval:
+  top_k: 20
+  rerank_top_k: 5
+  hybrid_search: true
+
+vector_store:
+  provider: qdrant
+  index: hnsw
+

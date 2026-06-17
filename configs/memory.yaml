@@ -1,0 +1,17 @@
+# Agent memory configuration placeholder.
+
+short_term_memory:
+  max_turns: 12
+
+profile_memory:
+  storage: structured
+  conflict_policy: latest_with_evidence
+
+episodic_memory:
+  storage: vector
+  top_k: 6
+
+maintenance:
+  async_update: true
+  forgetting_policy: decay_by_time_and_relevance
+
