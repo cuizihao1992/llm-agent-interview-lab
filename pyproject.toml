@@ -5,6 +5,9 @@ description = "A study knowledge base and code scaffold for LLM Agent interview 
 requires-python = ">=3.10"
 dependencies = []
 
+[project.scripts]
+interview-lab = "interview_lab.cli:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0.0"

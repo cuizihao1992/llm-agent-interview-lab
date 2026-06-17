@@ -1,68 +1,67 @@
 # LLM Agent Interview Lab
 
-这个项目用于系统学习大模型 Agent 算法面试中的高频知识点，并为后续开发 RAG、AI 记忆系统、长上下文实验代码预留工程结构。
+面向大模型 / Agent 算法面试的知识库与可运行 MVP。
 
-## 项目目标
+这个项目现在包含两部分：
 
-- 把高频面试题拆成结构化知识文档，便于复习和扩展。
-- 沉淀可复用的 RAG 数据工程、记忆机制、检索优化代码骨架。
-- 后续可扩展为一个本地知识库问答系统或面试训练工具。
+- `site/`：可部署到 GitHub Pages 的知识学习页面。
+- `src/interview_lab/`：可本地运行的 RAG + 向量库 + Agent 记忆 + 模型适配 MVP。
 
-## 内容模块
+## 在线页面
 
-| 模块 | 文档 |
-| --- | --- |
-| 长期陪伴型 AI 记忆机制 | [docs/01-memory-mechanism.md](docs/01-memory-mechanism.md) |
-| RAG 向量数据工程全流程 | [docs/02-rag-vector-data-engineering.md](docs/02-rag-vector-data-engineering.md) |
-| 长上下文模型与 RAG 的关系 | [docs/03-long-context-vs-rag.md](docs/03-long-context-vs-rag.md) |
-| Transformer 超长上下文瓶颈与优化 | [docs/04-transformer-long-context.md](docs/04-transformer-long-context.md) |
-| 面试回答模板 | [docs/interview-answer-templates.md](docs/interview-answer-templates.md) |
-| 学习路线 | [docs/learning-roadmap.md](docs/learning-roadmap.md) |
-
-## 工程结构
-
-```text
-llm-agent-interview-lab/
-  configs/              # 模型、切片、检索等配置
-  data/                 # 原始文档、处理中间结果、向量库数据
-  docs/                 # 知识库文档
-  src/                  # 后续开发代码
-    agent_memory/       # AI 记忆机制
-    rag_pipeline/       # RAG 数据处理与检索链路
-    long_context/       # 长上下文实验
-  tests/                # 单元测试
-```
-
-## 后续开发方向
-
-1. 实现文档解析、清洗、切片、向量化、入库。
-2. 实现向量检索、关键词检索、混合检索和重排序。
-3. 实现短期记忆、实体画像记忆、长期情景记忆。
-4. 增加面试问答训练数据，构建本地 RAG 问答 Demo。
-5. 做长上下文实验，对比“全量上下文”和“RAG 召回后精读”的成本、延迟、准确率。
-
-## GitHub Pages
-
-项目包含一个静态知识页面，源码在 [site](site)。
-
-部署方式：
-
-1. 推送到 `main` 分支。
-2. 在 GitHub 仓库进入 `Settings -> Pages`。
-3. `Build and deployment` 的 `Source` 选择 `GitHub Actions`。
-4. 等待 `Deploy GitHub Pages` 工作流完成。
-
-部署后页面地址通常是：
+GitHub Pages:
 
 ```text
 https://cuizihao1992.github.io/llm-agent-interview-lab/
 ```
 
+## 核心能力
+
+### 1. 知识库
+
+文档位于 `docs/`，覆盖：
+
+- 长期陪伴型 AI 记忆机制
+- RAG 向量数据工程
+- 长上下文模型与 RAG 的关系
+- Transformer 超长上下文瓶颈与优化
+- 面试回答模板
+- 学习路线
+
+### 2. RAG
+
+已实现最小可运行链路：
+
+```text
+Markdown 文档 -> 语义切片 -> 本地 embedding -> SQLite 向量库 -> 相似度检索 -> Prompt 上下文
+```
+
+当前 MVP 使用本地 `HashingEmbeddingModel`，不需要 API Key。后续可以替换为 OpenAI embedding、bge、Qwen embedding 等真实模型。
+
+### 3. Agent 记忆
+
+已实现三层记忆：
+
+- 短期记忆：最近对话轮次。
+- 实体画像记忆：用户目标、偏好、身份等结构化事实。
+- 长期情景记忆：用户消息向量化后存入 SQLite，提问时语义召回。
+
+### 4. 模型接入
+
+默认使用 `MockLLM`，可以不联网跑通完整链路。
+
+需要真实模型时，可使用 OpenAI-compatible Chat API：
+
+```powershell
+$env:OPENAI_API_KEY="你的 API Key"
+$env:OPENAI_MODEL="gpt-4.1-mini"
+$env:OPENAI_BASE_URL="https://api.openai.com/v1"
+interview-lab ask "RAG 的工程链路是什么？" --real-llm
+```
+
+兼容其他 OpenAI API 风格平台，只需要改 `OPENAI_BASE_URL` 和 `OPENAI_MODEL`。
+
 ## 快速开始
-
-当前版本以文档和代码骨架为主，暂未绑定具体模型或向量数据库。
-
-后续如果使用 Python 开发，可先创建环境：
 
 ```powershell
 python -m venv .venv
@@ -70,8 +69,72 @@ python -m venv .venv
 pip install -e .
 ```
 
-运行占位测试：
+初始化数据库：
 
 ```powershell
-pytest
+interview-lab init-db
 ```
+
+把 `docs/` 索引进本地向量库：
+
+```powershell
+interview-lab index-docs --docs docs --clear
+```
+
+使用 Mock 模型提问：
+
+```powershell
+interview-lab ask "长期陪伴型 AI 的记忆机制怎么设计？"
+```
+
+添加一条结构化用户画像事实：
+
+```powershell
+interview-lab add-fact --key goal --value "准备大模型 Agent 算法面试"
+```
+
+进入连续对话：
+
+```powershell
+interview-lab chat
+```
+
+## 工程结构
+
+```text
+llm-agent-interview-lab/
+  .github/workflows/       # GitHub Pages 自动部署
+  configs/                 # RAG 与记忆配置草案
+  data/                    # 本地数据目录，运行时 SQLite 不提交
+  docs/                    # 面试知识库文档
+  site/                    # GitHub Pages 静态学习页面
+  src/
+    interview_lab/         # 可运行 MVP 核心
+      agent.py             # Agent 编排
+      cli.py               # 命令行入口
+      embeddings.py        # 本地 embedding MVP
+      llm.py               # Mock / OpenAI-compatible 模型接口
+      memory.py            # 三层记忆体系
+      rag.py               # Markdown 索引与检索
+      vector_store.py      # SQLite 向量库
+    agent_memory/          # 早期记忆模块草案
+    rag_pipeline/          # 早期 RAG 模块草案
+    long_context/          # 长上下文分析工具
+  tests/                   # 单元测试
+```
+
+## 后续演进
+
+1. 把 `HashingEmbeddingModel` 替换为真实 embedding provider。
+2. 把 `SQLiteVectorStore` 替换为 Qdrant、Milvus、Chroma 或 pgvector。
+3. 用 LLM 做记忆抽取，替换当前启发式事实抽取规则。
+4. 增加 FastAPI 服务层，让 `site/` 可以直接调用本地后端。
+5. 增加面试回答评分、知识盲区诊断和复习计划。
+
+## 验证
+
+```powershell
+python -m pytest
+```
+
+更多架构说明见 [docs/mvp-architecture.md](docs/mvp-architecture.md)。

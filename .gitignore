@@ -7,6 +7,8 @@ __pycache__/
 
 data/vector_store/*
 !data/vector_store/.gitkeep
+data/*.sqlite
+data/*.sqlite-*
 
 .env
 .env.*
