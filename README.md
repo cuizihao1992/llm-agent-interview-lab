@@ -17,7 +17,12 @@ https://cuizihao1992.github.io/llm-agent-interview-lab/
 
 ## 移动 App MVP
 
-当前移动端选型是 PWA。
+当前有两个移动端入口：
+
+- `site/`：PWA，适合最快安装体验。
+- `apps/flutter_agent_interview/`：Flutter App，适合后续打包 Android / iOS。
+
+### PWA
 
 原因：
 
@@ -42,6 +47,45 @@ https://cuizihao1992.github.io/llm-agent-interview-lab/
 
 - Android Chrome：打开页面 -> 菜单 -> 添加到主屏幕 / 安装应用。
 - iOS Safari：打开页面 -> 分享 -> 添加到主屏幕。
+
+### Flutter App
+
+Flutter 版本位于：
+
+```text
+apps/flutter_agent_interview/
+```
+
+当前能力：
+
+- 不用后端。
+- 不做 RAG 请求。
+- 对话、用户画像、模型设置保存在本机。
+- 未配置模型时使用内置知识 Demo 回答。
+- 配置 OpenAI-compatible API Key 后，App 直连 `/chat/completions`。
+
+安装 Flutter SDK 后执行：
+
+```bash
+cd apps/flutter_agent_interview
+flutter create .
+flutter pub get
+flutter run
+```
+
+Android 打包：
+
+```bash
+flutter build apk --release
+```
+
+iOS 打包：
+
+```bash
+flutter build ios --release
+```
+
+iOS 需要 macOS 和 Xcode。
 
 ## 核心能力
 
