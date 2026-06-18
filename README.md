@@ -15,6 +15,34 @@ GitHub Pages:
 https://cuizihao1992.github.io/llm-agent-interview-lab/
 ```
 
+## 移动 App MVP
+
+当前移动端选型是 PWA。
+
+原因：
+
+- 一套前端同时支持 Android 和 iOS。
+- 可以从浏览器添加到主屏，像普通 App 一样打开。
+- 不需要先上架应用商店。
+- 当前阶段不用后端，数据保存在手机本地。
+
+当前 App 能力：
+
+- 本地对话机器人界面。
+- IndexedDB 本地保存对话和用户画像事实。
+- 内置 Agent / RAG / 长上下文面试知识。
+- 未配置模型时使用本地 Demo 回答。
+- 配置 API Key 后，直接调用 OpenAI-compatible `/chat/completions`。
+
+安全说明：
+
+前端直连模型会把 API Key 保存在当前设备浏览器环境里，只适合个人学习 MVP。后续如果要公开给多人使用，应增加后端代理，不要把模型 Key 放在前端。
+
+安装方式：
+
+- Android Chrome：打开页面 -> 菜单 -> 添加到主屏幕 / 安装应用。
+- iOS Safari：打开页面 -> 分享 -> 添加到主屏幕。
+
 ## 核心能力
 
 ### 1. 知识库

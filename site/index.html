@@ -2,139 +2,108 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>LLM Agent Interview Lab</title>
-    <meta
-      name="description"
-      content="大模型 Agent 算法面试知识库：AI 记忆机制、RAG 数据工程、长上下文与 Transformer 优化。"
-    />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Agent 面试机器人</title>
+    <meta name="description" content="可安装的 LLM Agent 面试知识库对话机器人，本地记忆，可直连大模型。" />
+    <meta name="theme-color" content="#1f2328" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Agent 面试" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <a class="brand" href="#overview" aria-label="LLM Agent Interview Lab 首页">
-        <span class="brand-mark">LA</span>
-        <span>LLM Agent Interview Lab</span>
-      </a>
-      <nav class="topnav" aria-label="主导航">
-        <a href="#memory">记忆机制</a>
-        <a href="#rag">RAG 工程</a>
-        <a href="#long-rag">Long RAG</a>
-        <a href="#transformer">长上下文优化</a>
-      </nav>
-      <a class="repo-link" href="https://github.com/cuizihao1992/llm-agent-interview-lab">GitHub</a>
-    </header>
-
-    <main>
-      <section class="hero" id="overview">
-        <canvas id="knowledge-canvas" aria-hidden="true"></canvas>
-        <div class="hero-content">
-          <p class="eyebrow">ByteDance LLM / Agent Interview Notes</p>
-          <h1>把高频面试题拆成可复习、可扩展、可开发的知识系统</h1>
-          <p class="hero-copy">
-            覆盖长期陪伴型 AI 记忆机制、RAG 向量数据工程、长上下文与 RAG 的融合关系、
-            Transformer 超长上下文瓶颈与优化方案。
-          </p>
-          <div class="hero-actions" aria-label="页面快捷入口">
-            <a href="#explorer">进入知识地图</a>
-            <a href="#templates">查看回答模板</a>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="知识模块">
+        <div class="brand">
+          <span class="brand-mark">AI</span>
+          <div>
+            <strong>Agent 面试机器人</strong>
+            <small>本地记忆 + 直连模型</small>
           </div>
         </div>
-      </section>
 
-      <section class="metrics" aria-label="知识库概览">
-        <div>
-          <strong>4</strong>
-          <span>核心面试模块</span>
+        <div class="status-card">
+          <span id="model-status-dot" class="status-dot demo"></span>
+          <div>
+            <strong id="model-status-title">本地 Demo</strong>
+            <small id="model-status-copy">未配置模型，使用内置知识回答。</small>
+          </div>
         </div>
-        <div>
-          <strong>6</strong>
-          <span>结构化文档</span>
-        </div>
-        <div>
-          <strong>3</strong>
-          <span>工程代码方向</span>
-        </div>
-        <div>
-          <strong>1</strong>
-          <span>可部署学习页面</span>
-        </div>
-      </section>
 
-      <section class="section" id="explorer">
-        <div class="section-heading">
-          <p class="eyebrow">Knowledge Map</p>
-          <h2>知识地图</h2>
-        </div>
-        <div class="explorer">
-          <aside class="module-nav" aria-label="知识模块">
-            <label class="search-label" for="search">检索知识点</label>
-            <input id="search" type="search" placeholder="输入 RAG、KV Cache、画像..." />
-            <div id="module-list" class="module-list"></div>
-          </aside>
-          <article class="module-detail" id="module-detail" aria-live="polite"></article>
-        </div>
-      </section>
+        <nav class="module-list" id="module-list" aria-label="模块快捷提问"></nav>
 
-      <section class="section split" id="templates">
-        <div class="section-heading">
-          <p class="eyebrow">Interview Playbook</p>
-          <h2>面试回答节奏</h2>
-        </div>
-        <div class="template-grid">
-          <article>
-            <span>01</span>
-            <h3>先点出核心矛盾</h3>
-            <p>例如不能全量塞 prompt、RAG 不是只接向量库、长上下文不能替代数据治理。</p>
-          </article>
-          <article>
-            <span>02</span>
-            <h3>再拆系统结构</h3>
-            <p>用分层记忆、数据管线、召回重排、KV Cache 管理等结构承接问题。</p>
-          </article>
-          <article>
-            <span>03</span>
-            <h3>补工程取舍</h3>
-            <p>讲成本、延迟、权限、索引、并发、评估指标，面试回答会更像做过系统。</p>
-          </article>
-          <article>
-            <span>04</span>
-            <h3>收束成趋势判断</h3>
-            <p>例如 Long RAG、异步记忆更新、混合检索、算子和架构联合优化。</p>
-          </article>
-        </div>
-      </section>
+        <button id="install-button" class="secondary-button" type="button" hidden>安装到手机</button>
+        <button id="settings-button" class="secondary-button" type="button">模型与记忆设置</button>
+        <a class="repo-link" href="https://github.com/cuizihao1992/llm-agent-interview-lab">GitHub 仓库</a>
+      </aside>
 
-      <section class="section roadmap" id="roadmap">
-        <div class="section-heading">
-          <p class="eyebrow">Build Path</p>
-          <h2>后续开发路线</h2>
-        </div>
-        <ol>
-          <li>
-            <strong>文档解析与切片</strong>
-            <span>实现 Markdown / PDF / 网页解析、语义切片、父子块结构。</span>
-          </li>
-          <li>
-            <strong>检索与重排</strong>
-            <span>接入 Embedding、向量库、关键词检索、reranker 和召回评估。</span>
-          </li>
-          <li>
-            <strong>Agent 记忆</strong>
-            <span>实现短期对话缓存、结构化画像、长期情景记忆和异步更新。</span>
-          </li>
-          <li>
-            <strong>面试训练 Demo</strong>
-            <span>基于知识库做问答、引用来源、回答评分和知识盲区提示。</span>
-          </li>
-        </ol>
-      </section>
-    </main>
+      <main class="chat-panel">
+        <header class="chat-header">
+          <div>
+            <p class="eyebrow">Mobile PWA MVP</p>
+            <h1>大模型 Agent 面试陪练</h1>
+          </div>
+          <button id="clear-chat" class="icon-button" type="button" aria-label="清空对话">清空</button>
+        </header>
 
-    <footer>
-      <span>LLM Agent Interview Lab</span>
-      <span>面向大模型 / Agent 算法面试的知识与工程实验室</span>
-    </footer>
+        <section class="quick-start" aria-label="快捷问题">
+          <button data-question="长期陪伴型 AI 的记忆机制怎么设计？" type="button">记忆机制</button>
+          <button data-question="RAG 向量数据工程链路是什么？" type="button">RAG 工程</button>
+          <button data-question="长上下文模型会取代 RAG 吗？" type="button">Long RAG</button>
+          <button data-question="Transformer 处理超长上下文有哪些瓶颈？" type="button">长上下文优化</button>
+        </section>
+
+        <section class="messages" id="messages" aria-live="polite"></section>
+
+        <form class="composer" id="chat-form">
+          <textarea id="message-input" rows="1" placeholder="问一个面试题，比如：RAG 为什么要混合检索？"></textarea>
+          <button type="submit">发送</button>
+        </form>
+      </main>
+    </div>
+
+    <dialog id="settings-dialog">
+      <form method="dialog" class="settings-form">
+        <div class="dialog-head">
+          <div>
+            <p class="eyebrow">Local App</p>
+            <h2>模型与本地记忆</h2>
+          </div>
+          <button value="cancel" class="icon-button" type="submit" aria-label="关闭">关闭</button>
+        </div>
+
+        <label>
+          OpenAI-compatible Base URL
+          <input id="model-base-input" type="url" placeholder="https://api.openai.com/v1" />
+        </label>
+        <label>
+          Model
+          <input id="model-name-input" type="text" placeholder="gpt-4.1-mini" />
+        </label>
+        <label>
+          API Key
+          <input id="api-key-input" type="password" placeholder="sk-..." autocomplete="off" />
+        </label>
+        <label>
+          添加用户画像事实
+          <input id="profile-fact-input" type="text" placeholder="例如：我的目标是准备 Agent 算法面试" />
+        </label>
+
+        <p class="hint">
+          当前版本不用后端，不做 RAG，不请求自己的服务器。设置、对话和记忆都保存在当前设备。只有配置 API Key 后，发送消息才会直连大模型接口。
+        </p>
+
+        <div id="fact-list" class="fact-list"></div>
+
+        <div class="dialog-actions">
+          <button id="save-fact-button" class="secondary-button" type="button">保存画像</button>
+          <button id="save-settings-button" type="button">保存设置</button>
+        </div>
+      </form>
+    </dialog>
 
     <script src="./main.js"></script>
   </body>

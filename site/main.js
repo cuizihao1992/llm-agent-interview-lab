@@ -1,177 +1,346 @@
 const modules = [
   {
     id: "memory",
-    label: "01",
-    title: "长期陪伴型 AI 记忆机制",
-    summary:
-      "对话轮次变多后，不能把全量历史塞进提示词。更稳的做法是分层管理记忆：近期上下文保连贯，结构化画像保事实，长期情景记忆保语义背景。",
-    points: [
-      ["短期记忆", "保留近期多轮原始对话，直接参与 prompt，解决当前对话连贯性。"],
-      ["实体画像记忆", "抽取用户身份、偏好、经历、目标等稳定事实，用结构化数据精准检索。"],
-      ["长期情景记忆", "把闲聊、感悟、项目背景等非事实内容切片向量化，用语义召回。"],
-      ["异步更新", "AI 先响应用户，后台做事实抽取、冲突合并、入库和遗忘更新。"]
-    ],
-    answer:
-      "我不会把全部历史直接塞进 prompt，而是做分层记忆。近期几轮对话作为短期记忆直接拼接；用户偏好、身份、经历这类事实抽取成结构化画像，用数据库精准查询；感悟、闲聊、项目背景这类非结构化内容切片后向量化，放入向量库做语义召回。生成回答时，把系统提示词、画像事实、召回片段和近期对话组合起来。记忆更新放到异步后台做，包括事实抽取、入库、冲突合并和遗忘更新。"
+    title: "记忆机制",
+    prompt: "长期陪伴型 AI 的记忆机制怎么设计？",
+    summary: "短期记忆、结构化画像、长期情景记忆、异步更新和遗忘机制。"
   },
   {
     id: "rag",
-    label: "02",
-    title: "RAG 向量数据全流程工程化",
-    summary:
-      "RAG 的效果不只取决于大模型，数据质量决定下限，工程链路决定上限。完整链路包括解析清洗、元数据、语义切片、向量化、索引、检索、重排和评估。",
-    points: [
-      ["预处理", "统一 PDF、网页、文档格式，清洗乱码、广告、页眉页脚，并提取权限、时间、来源等元数据。"],
-      ["语义切片", "按标题、段落、句子边界切分，保留 10% 到 20% 重叠，避免破坏语义。"],
-      ["父子块架构", "子块用于精准检索，父块用于返回上下文，兼顾召回精度和完整性。"],
-      ["闭环优化", "用向量加关键词混合检索，搭配 reranker，并评估召回率、幻觉率、延迟和成本。"]
-    ],
-    answer:
-      "我会把 RAG 看成数据工程问题，而不是只接一个向量库。首先对 PDF、网页、文档做解析和清洗，统一格式，去掉噪音，并提取时间、作者、权限等元数据。切片上避免固定长度硬切，优先按语义结构切分，并设置 10% 到 20% 的重叠。为了兼顾精度和上下文完整性，可以用子块检索、父块返回。向量化阶段通用场景用成熟 embedding 模型，专业领域需要评估或微调。向量库在千万级数据下可以用 HNSW 索引，同时做批量入库和元数据过滤。检索时采用向量加关键词的混合检索，再用 reranker 重排。"
+    title: "RAG 工程",
+    prompt: "RAG 向量数据工程链路是什么？",
+    summary: "解析清洗、语义切片、向量化、索引、混合检索和重排。"
   },
   {
     id: "long-rag",
-    label: "03",
-    title: "长上下文模型与 RAG 的关系",
-    summary:
-      "长上下文不会简单取代 RAG。RAG 负责从海量数据中做粗召回，解决信息广度；长上下文模型负责精读候选材料，解决信息深度。",
-    points: [
-      ["成本", "全量长文本输入会显著增加 token 成本，RAG 能把输入控制在有效片段内。"],
-      ["延迟", "上下文越长响应越慢，线上系统更需要先召回再生成。"],
-      ["中间迷失", "过长上下文会让模型忽略中间关键信息，RAG 可以先去粗取精。"],
-      ["数据治理", "RAG 检索阶段可以处理权限、版本、来源和引用，长上下文本身不解决治理问题。"]
-    ],
-    answer:
-      "我认为长上下文不会直接取代 RAG，而是会和 RAG 融合。RAG 的价值是从海量外部知识中做低成本、低延迟、可权限控制的粗召回，解决信息广度问题；长上下文模型适合对召回后的高质量材料做深度阅读和跨文档推理，解决信息深度问题。即使模型支持很长上下文，全量输入仍然有 token 成本、响应延迟和中间迷失问题，而且企业知识库还需要权限、版本和引用治理。因此更合理的趋势是 Long RAG。"
+    title: "Long RAG",
+    prompt: "长上下文模型会取代 RAG 吗？",
+    summary: "RAG 做筛选，长上下文做精读，两者互补。"
   },
   {
     id: "transformer",
-    label: "04",
-    title: "Transformer 超长上下文瓶颈与优化",
-    summary:
-      "Transformer 长文本问题的本质是平方级注意力计算、KV Cache 显存压力、显存 IO 瓶颈和位置编码外推问题，需要多层优化组合解决。",
-    points: [
-      ["O(n^2) 注意力", "标准自注意力需要每个 token 与其他 token 交互，长度增加会导致计算量平方级增长。"],
-      ["KV Cache", "推理时需要保存历史 Key 和 Value，长上下文和高并发会快速吃满显存。"],
-      ["FlashAttention", "通过算子融合和分块计算减少显存读写，缓解注意力计算中的 IO 瓶颈。"],
-      ["GQA / PagedAttention / 位置编码", "GQA 减少 KV Cache，PagedAttention 提升显存利用率，RoPE Scaling 和 ALiBi 改善长度外推。"]
-    ],
-    answer:
-      "Transformer 处理超长上下文主要有三个瓶颈。第一是自注意力 O(n^2) 的计算复杂度，长度增加会导致计算量平方级上涨。第二是推理阶段 KV Cache 带来的显存和带宽压力，高并发长文本场景下显存搬运可能比计算更慢。第三是位置编码外推性，模型如果主要在短上下文训练，直接扩到超长文本会导致位置信息泛化变差。优化上，FlashAttention 减少显存 IO；GQA 减少 KV Cache；PagedAttention 用分页方式管理 KV Cache；RoPE Scaling、ALiBi 等方法提升长文本适配能力。"
+    title: "长上下文优化",
+    prompt: "Transformer 处理超长上下文有哪些瓶颈？",
+    summary: "O(n^2)、KV Cache、FlashAttention、GQA、PagedAttention、位置编码。"
   }
 ];
 
-const list = document.querySelector("#module-list");
-const detail = document.querySelector("#module-detail");
-const search = document.querySelector("#search");
+const knowledge = {
+  memory:
+    "长期陪伴型 AI 不应把所有历史塞进 prompt。更稳的方案是分层记忆：近期多轮对话作为短期记忆；用户身份、偏好、目标等事实抽取成结构化画像；闲聊、项目背景、感悟等内容作为长期情景记忆。生成时按需召回，更新时用异步任务做事实抽取、冲突合并和遗忘。",
+  rag:
+    "RAG 要按数据工程链路来设计：先解析 PDF、网页、Markdown 等文档并清洗噪音，再提取元数据；切片时按标题、段落和语义边界切分，保留重叠；向量化后写入向量库；检索阶段用向量 + 关键词混合检索，再用 reranker 重排；最后用召回率、引用准确性、幻觉率、延迟和成本做闭环评估。",
+  "long-rag":
+    "长上下文不会简单取代 RAG。RAG 的价值是从海量资料里低成本、低延迟、可权限控制地筛选相关内容；长上下文模型适合对筛选后的高质量材料精读和跨文档推理。未来更现实的是 Long RAG：先召回，再精读。",
+  transformer:
+    "Transformer 处理超长上下文的核心瓶颈是自注意力 O(n^2) 计算复杂度、KV Cache 显存与带宽压力、显存 IO 瓶颈以及位置编码外推能力。常见优化包括 FlashAttention、GQA、PagedAttention、RoPE Scaling、ALiBi 等。"
+};
 
-let selectedId = modules[0].id;
+const db = {
+  open() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open("agent-interview-local-db", 1);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains("messages")) {
+          database.createObjectStore("messages", { keyPath: "id", autoIncrement: true });
+        }
+        if (!database.objectStoreNames.contains("facts")) {
+          database.createObjectStore("facts", { keyPath: "id", autoIncrement: true });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  },
+  async all(storeName) {
+    const database = await this.open();
+    return new Promise((resolve, reject) => {
+      const request = database.transaction(storeName, "readonly").objectStore(storeName).getAll();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  },
+  async add(storeName, value) {
+    const database = await this.open();
+    return new Promise((resolve, reject) => {
+      const request = database.transaction(storeName, "readwrite").objectStore(storeName).add(value);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  },
+  async clear(storeName) {
+    const database = await this.open();
+    return new Promise((resolve, reject) => {
+      const request = database.transaction(storeName, "readwrite").objectStore(storeName).clear();
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+};
 
-function renderList(filter = "") {
-  const normalized = filter.trim().toLowerCase();
-  const visibleModules = modules.filter((module) => {
-    const content = `${module.title} ${module.summary} ${module.points.flat().join(" ")} ${module.answer}`.toLowerCase();
-    return content.includes(normalized);
-  });
+const messagesEl = document.querySelector("#messages");
+const form = document.querySelector("#chat-form");
+const input = document.querySelector("#message-input");
+const moduleList = document.querySelector("#module-list");
+const clearButton = document.querySelector("#clear-chat");
+const settingsButton = document.querySelector("#settings-button");
+const settingsDialog = document.querySelector("#settings-dialog");
+const modelBaseInput = document.querySelector("#model-base-input");
+const modelNameInput = document.querySelector("#model-name-input");
+const apiKeyInput = document.querySelector("#api-key-input");
+const profileFactInput = document.querySelector("#profile-fact-input");
+const saveFactButton = document.querySelector("#save-fact-button");
+const saveSettingsButton = document.querySelector("#save-settings-button");
+const factList = document.querySelector("#fact-list");
+const installButton = document.querySelector("#install-button");
+const statusDot = document.querySelector("#model-status-dot");
+const statusTitle = document.querySelector("#model-status-title");
+const statusCopy = document.querySelector("#model-status-copy");
 
-  list.innerHTML = visibleModules
+let deferredInstallPrompt = null;
+let messages = [];
+let facts = [];
+let settings = loadSettings();
+
+function loadSettings() {
+  return {
+    baseUrl: localStorage.getItem("agent-model-base-url") || "https://api.openai.com/v1",
+    model: localStorage.getItem("agent-model-name") || "gpt-4.1-mini",
+    apiKey: localStorage.getItem("agent-model-api-key") || ""
+  };
+}
+
+function saveSettings() {
+  localStorage.setItem("agent-model-base-url", settings.baseUrl);
+  localStorage.setItem("agent-model-name", settings.model);
+  localStorage.setItem("agent-model-api-key", settings.apiKey);
+}
+
+async function init() {
+  messages = await db.all("messages");
+  facts = await db.all("facts");
+  if (messages.length === 0) {
+    await addMessage({
+      role: "assistant",
+      content:
+        "你好，我是 Agent 面试机器人。当前不用后端，记忆保存在手机本地。配置模型 API Key 后，我会直连大模型；不配置时，我用内置知识库给你练习。"
+    });
+    messages = await db.all("messages");
+  }
+  renderModules();
+  renderStatus();
+  renderMessages();
+}
+
+async function addMessage(message) {
+  await db.add("messages", { ...message, createdAt: Date.now() });
+}
+
+function renderModules() {
+  moduleList.innerHTML = modules
     .map(
       (module) => `
-        <button class="module-button ${module.id === selectedId ? "active" : ""}" data-id="${module.id}">
-          <span>${module.label}</span>
-          ${module.title}
+        <button class="module-card" data-question="${module.prompt}" type="button">
+          <strong>${module.title}</strong>
+          <span>${module.summary}</span>
         </button>
       `
     )
     .join("");
-
-  if (!visibleModules.some((module) => module.id === selectedId) && visibleModules[0]) {
-    selectedId = visibleModules[0].id;
-  }
-  if (visibleModules.length === 0) {
-    detail.innerHTML = '<p class="module-summary">没有匹配的知识点。换个关键词试试，比如 RAG、记忆、KV Cache。</p>';
-    return;
-  }
-
-  renderDetail();
 }
 
-function renderDetail() {
-  const module = modules.find((item) => item.id === selectedId) || modules[0];
-  detail.innerHTML = `
-    <span class="module-kicker">${module.label}</span>
-    <h3 id="${module.id}">${module.title}</h3>
-    <p class="module-summary">${module.summary}</p>
-    <div class="point-grid">
-      ${module.points
-        .map(
-          ([title, text]) => `
-            <section class="point">
-              <strong>${title}</strong>
-              <p>${text}</p>
-            </section>
-          `
-        )
-        .join("")}
-    </div>
-    <div class="answer-box">
-      <strong>面试回答模板：</strong>
-      ${module.answer}
-    </div>
-  `;
+function renderStatus() {
+  const connected = Boolean(settings.apiKey);
+  statusDot.className = `status-dot ${connected ? "connected" : "demo"}`;
+  statusTitle.textContent = connected ? "直连模型" : "本地 Demo";
+  statusCopy.textContent = connected ? `${settings.model} · ${settings.baseUrl}` : "未配置模型，使用内置知识回答。";
 }
 
-list.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-id]");
-  if (!button) return;
-  selectedId = button.dataset.id;
-  renderList(search.value);
+function renderMessages() {
+  messagesEl.innerHTML = messages
+    .map(
+      (message) => `
+        <article class="message ${message.role}">
+          <div class="bubble">${escapeHtml(message.content).replace(/\n/g, "<br />")}</div>
+        </article>
+      `
+    )
+    .join("");
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function renderFacts() {
+  factList.innerHTML = facts.length
+    ? facts.map((fact) => `<span>${escapeHtml(fact.content)}</span>`).join("")
+    : "<small>暂无本地画像事实。</small>";
+}
+
+async function sendMessage(question) {
+  const trimmed = question.trim();
+  if (!trimmed) return;
+
+  await addMessage({ role: "user", content: trimmed });
+  await addMessage({ role: "assistant", content: "正在思考..." });
+  messages = await db.all("messages");
+  renderMessages();
+
+  const answer = settings.apiKey ? await callModel(trimmed).catch((error) => fallbackAnswer(trimmed, error)) : buildDemoAnswer(trimmed);
+  const last = messages[messages.length - 1];
+  await db.clear("messages");
+  const updated = [...messages.slice(0, -1), { ...last, content: answer }];
+  for (const message of updated.slice(-40)) {
+    await addMessage({ role: message.role, content: message.content });
+  }
+  messages = await db.all("messages");
+  renderMessages();
+}
+
+async function callModel(message) {
+  const systemPrompt = buildSystemPrompt();
+  const response = await fetch(`${settings.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${settings.apiKey}`
+    },
+    body: JSON.stringify({
+      model: settings.model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...messages.slice(-8).map((item) => ({ role: item.role, content: item.content })),
+        { role: "user", content: message }
+      ]
+    })
+  });
+  if (!response.ok) {
+    throw new Error(`模型接口返回 HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || "模型没有返回内容。";
+}
+
+function buildSystemPrompt() {
+  const factText = facts.map((fact) => `- ${fact.content}`).join("\n") || "无";
+  const knowledgeText = Object.entries(knowledge)
+    .map(([key, value]) => `[${key}]\n${value}`)
+    .join("\n\n");
+  return `你是一个大模型 Agent 算法面试陪练。请用中文回答，结构清晰，优先给出面试可表达的答案。
+
+本地用户画像：
+${factText}
+
+内置知识库：
+${knowledgeText}
+
+要求：
+1. 先讲核心矛盾。
+2. 再拆系统结构。
+3. 最后补工程取舍。
+4. 不要声称你做了 RAG 检索；当前版本只使用内置知识和本地记忆。`;
+}
+
+function fallbackAnswer(message, error) {
+  return `模型调用失败：${error.message}\n\n已切换到本地 Demo：\n${buildDemoAnswer(message)}`;
+}
+
+function buildDemoAnswer(message) {
+  const key = pickKnowledgeKey(message);
+  const factHint = facts.length ? `\n\n结合你的本地画像：${facts.map((fact) => fact.content).join("；")}` : "";
+  return `${knowledge[key]}${factHint}\n\n面试表达建议：先讲核心矛盾，再拆系统结构，最后补工程取舍。`;
+}
+
+function pickKnowledgeKey(message) {
+  const lower = message.toLowerCase();
+  if (lower.includes("transformer") || lower.includes("kv") || message.includes("长上下文优化")) return "transformer";
+  if (lower.includes("long") || message.includes("取代") || message.includes("长上下文")) return "long-rag";
+  if (lower.includes("rag") || message.includes("向量") || message.includes("检索")) return "rag";
+  if (message.includes("记忆") || message.includes("画像")) return "memory";
+  return "rag";
+}
+
+function escapeHtml(text) {
+  return text.replace(/[&<>"']/g, (char) => {
+    const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
+    return map[char];
+  });
+}
+
+form.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const value = input.value;
+  input.value = "";
+  input.style.height = "auto";
+  sendMessage(value);
 });
 
-search.addEventListener("input", () => renderList(search.value));
+input.addEventListener("input", () => {
+  input.style.height = "auto";
+  input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
+});
 
-function drawKnowledgeCanvas() {
-  const canvas = document.querySelector("#knowledge-canvas");
-  const context = canvas.getContext("2d");
-  const pixelRatio = window.devicePixelRatio || 1;
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
+document.querySelectorAll("[data-question]").forEach((button) => {
+  button.addEventListener("click", () => sendMessage(button.dataset.question));
+});
 
-  canvas.width = width * pixelRatio;
-  canvas.height = height * pixelRatio;
-  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-  context.clearRect(0, 0, width, height);
+moduleList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-question]");
+  if (button) sendMessage(button.dataset.question);
+});
 
-  const colors = ["#c44536", "#1f7a63", "#e0a935", "#2f63a3", "#1d1d1f"];
-  const nodes = Array.from({ length: 42 }, (_, index) => ({
-    x: (width * ((index * 37) % 100)) / 100,
-    y: (height * ((index * 53) % 100)) / 100,
-    r: 2 + (index % 4),
-    color: colors[index % colors.length]
-  }));
+clearButton.addEventListener("click", async () => {
+  await db.clear("messages");
+  await addMessage({ role: "assistant", content: "对话已清空。继续问我一个 Agent 面试题吧。" });
+  messages = await db.all("messages");
+  renderMessages();
+});
 
-  context.lineWidth = 1;
-  nodes.forEach((node, index) => {
-    nodes.slice(index + 1).forEach((other) => {
-      const distance = Math.hypot(node.x - other.x, node.y - other.y);
-      if (distance < 190) {
-        context.strokeStyle = `rgba(29, 29, 31, ${0.18 - distance / 1400})`;
-        context.beginPath();
-        context.moveTo(node.x, node.y);
-        context.lineTo(other.x, other.y);
-        context.stroke();
-      }
-    });
-  });
+settingsButton.addEventListener("click", () => {
+  modelBaseInput.value = settings.baseUrl;
+  modelNameInput.value = settings.model;
+  apiKeyInput.value = settings.apiKey;
+  profileFactInput.value = "";
+  renderFacts();
+  settingsDialog.showModal();
+});
 
-  nodes.forEach((node) => {
-    context.fillStyle = node.color;
-    context.beginPath();
-    context.arc(node.x, node.y, node.r, 0, Math.PI * 2);
-    context.fill();
+saveSettingsButton.addEventListener("click", () => {
+  settings.baseUrl = modelBaseInput.value.trim() || "https://api.openai.com/v1";
+  settings.model = modelNameInput.value.trim() || "gpt-4.1-mini";
+  settings.apiKey = apiKeyInput.value.trim();
+  saveSettings();
+  renderStatus();
+  settingsDialog.close();
+});
+
+saveFactButton.addEventListener("click", async () => {
+  const content = profileFactInput.value.trim();
+  if (!content) return;
+  await db.add("facts", { content, createdAt: Date.now() });
+  facts = await db.all("facts");
+  profileFactInput.value = "";
+  renderFacts();
+});
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  installButton.hidden = false;
+});
+
+installButton.addEventListener("click", async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  installButton.hidden = true;
+});
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js");
   });
 }
 
-renderList();
-drawKnowledgeCanvas();
-window.addEventListener("resize", drawKnowledgeCanvas);
+init();
+
