@@ -18,3 +18,4 @@ data/*.sqlite-*
 **/.flutter-plugins
 **/.flutter-plugins-dependencies
 **/build/
+dist/

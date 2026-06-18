@@ -407,7 +407,7 @@ class _QuickPrompts extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final prompts = const [
+    const prompts = [
       ('记忆机制', '长期陪伴型 AI 的记忆机制怎么设计？'),
       ('RAG 工程', 'RAG 向量数据工程链路是什么？'),
       ('Long RAG', '长上下文模型会取代 RAG 吗？'),
