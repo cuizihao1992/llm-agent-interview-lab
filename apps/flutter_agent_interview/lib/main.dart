@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 const defaultModelBaseUrl = 'https://api.deepseek.com/v1';
 const defaultModelName = 'deepseek-chat';
+const _thinkingContent = '正在思考...';
 
 void main() {
   runApp(const AgentInterviewApp());
@@ -37,22 +38,75 @@ class ChatMessage {
   const ChatMessage({
     required this.role,
     required this.content,
+    this.debugTrace,
   });
 
   final String role;
   final String content;
+  final ModelDebugTrace? debugTrace;
 
   Map<String, dynamic> toJson() => {
         'role': role,
         'content': content,
+        if (debugTrace != null) 'debugTrace': debugTrace!.toJson(),
       };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     return ChatMessage(
       role: json['role'] as String,
       content: json['content'] as String,
+      debugTrace: json['debugTrace'] == null
+          ? null
+          : ModelDebugTrace.fromJson(
+              json['debugTrace'] as Map<String, dynamic>),
     );
   }
+}
+
+class ModelDebugTrace {
+  const ModelDebugTrace({
+    required this.requestJson,
+    required this.responseJson,
+    required this.processedAnswer,
+  });
+
+  final String requestJson;
+  final String responseJson;
+  final String processedAnswer;
+
+  Map<String, dynamic> toJson() => {
+        'requestJson': requestJson,
+        'responseJson': responseJson,
+        'processedAnswer': processedAnswer,
+      };
+
+  factory ModelDebugTrace.fromJson(Map<String, dynamic> json) {
+    return ModelDebugTrace(
+      requestJson: json['requestJson'] as String? ?? '',
+      responseJson: json['responseJson'] as String? ?? '',
+      processedAnswer: json['processedAnswer'] as String? ?? '',
+    );
+  }
+}
+
+class ModelCallResult {
+  const ModelCallResult({
+    required this.answer,
+    required this.debugTrace,
+  });
+
+  final String answer;
+  final ModelDebugTrace debugTrace;
+}
+
+class ModelCallException implements Exception {
+  const ModelCallException(this.message, this.debugTrace);
+
+  final String message;
+  final ModelDebugTrace debugTrace;
+
+  @override
+  String toString() => message;
 }
 
 class ModelSettings {
@@ -100,7 +154,9 @@ class LocalStore {
 
   Future<void> saveMessages(List<ChatMessage> messages) async {
     final prefs = await SharedPreferences.getInstance();
-    final tail = messages.length > 40 ? messages.sublist(messages.length - 40) : messages;
+    final tail = messages.length > 40
+        ? messages.sublist(messages.length - 40)
+        : messages;
     await prefs.setString(
       _messagesKey,
       jsonEncode(tail.map((message) => message.toJson()).toList()),
@@ -171,7 +227,8 @@ class _ChatScreenState extends State<ChatScreen> {
           ? [
               const ChatMessage(
                 role: 'assistant',
-                content: '你好，我是 Agent 面试机器人。当前不用后端，记忆保存在本机。配置模型 API Key 后，我会直连大模型；不配置时，我用内置知识库给你练习。',
+                content:
+                    '你好，我是 Agent 面试机器人。当前不用后端，记忆保存在本机。配置模型 API Key 后，我会直连大模型；不配置时，我用内置知识库给你练习。',
               ),
             ]
           : messages;
@@ -199,22 +256,49 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages = [
         ..._messages,
         ChatMessage(role: 'user', content: question),
-        const ChatMessage(role: 'assistant', content: '正在思考...'),
+        const ChatMessage(role: 'assistant', content: _thinkingContent),
       ];
     });
     _controller.clear();
     _scrollToBottom();
 
-    final answer = _settings.hasApiKey
-        ? await _callModel().catchError((Object error) {
-            return '模型调用失败：$error\n\n已切换到本地 Demo：\n${_knowledge.demoAnswer(question, _facts)}';
-          })
-        : _knowledge.demoAnswer(question, _facts);
+    late final ChatMessage assistantMessage;
+    if (_settings.hasApiKey) {
+      try {
+        final result = await _callModel();
+        assistantMessage = ChatMessage(
+          role: 'assistant',
+          content: result.answer,
+          debugTrace: result.debugTrace,
+        );
+      } on ModelCallException catch (error) {
+        final fallback =
+            'Model call failed: ${error.message}\n\nFallback local demo:\n${_knowledge.demoAnswer(question, _facts)}';
+        assistantMessage = ChatMessage(
+          role: 'assistant',
+          content: fallback,
+          debugTrace: ModelDebugTrace(
+            requestJson: error.debugTrace.requestJson,
+            responseJson: error.debugTrace.responseJson,
+            processedAnswer: fallback,
+          ),
+        );
+      } catch (error) {
+        assistantMessage = ChatMessage(
+          role: 'assistant',
+          content:
+              'Model call failed: $error\n\nFallback local demo:\n${_knowledge.demoAnswer(question, _facts)}',
+        );
+      }
+    } else {
+      assistantMessage = ChatMessage(
+          role: 'assistant', content: _knowledge.demoAnswer(question, _facts));
+    }
 
     setState(() {
       _messages = [
         ..._messages.sublist(0, _messages.length - 1),
-        ChatMessage(role: 'assistant', content: answer),
+        assistantMessage,
       ];
       _sending = false;
     });
@@ -222,38 +306,84 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
-  Future<String> _callModel() async {
-    final endpoint = '${_settings.baseUrl.replaceFirst(RegExp(r'/$'), '')}/chat/completions';
-    final conversation = _messages.where((message) => message.content != '正在思考...').toList();
+  Future<ModelCallResult> _callModel() async {
+    final endpoint =
+        '${_settings.baseUrl.replaceFirst(RegExp(r'/$'), '')}/chat/completions';
+    final conversation = _messages
+        .where((message) => message.content != _thinkingContent)
+        .toList();
+    final requestBody = {
+      'model': _settings.model,
+      'messages': [
+        {'role': 'system', 'content': _systemPrompt()},
+        ...conversation.takeLast(8).map((message) => {
+              'role': message.role,
+              'content': message.content,
+            }),
+      ],
+    };
+    final requestDebugJson = _prettyJson({
+      'endpoint': endpoint,
+      'method': 'POST',
+      'headers': {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ***redacted***',
+      },
+      'body': requestBody,
+    });
+
     final response = await http.post(
       Uri.parse(endpoint),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ${_settings.apiKey}',
       },
-      body: jsonEncode({
-        'model': _settings.model,
-        'messages': [
-          {'role': 'system', 'content': _systemPrompt()},
-          ...conversation.takeLast(8).map((message) => {
-                'role': message.role,
-                'content': message.content,
-              }),
-        ],
-      }),
+      body: jsonEncode(requestBody),
     );
+    final responseText = utf8.decode(response.bodyBytes);
+    final responseDebugJson = _prettyJsonOrText(responseText);
+
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      throw ModelCallException(
+        'HTTP ${response.statusCode}',
+        ModelDebugTrace(
+          requestJson: requestDebugJson,
+          responseJson: responseDebugJson,
+          processedAnswer: '',
+        ),
+      );
     }
-    final data = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+
+    final data = jsonDecode(responseText) as Map<String, dynamic>;
     final choices = data['choices'] as List<dynamic>?;
-    if (choices == null || choices.isEmpty) return '模型没有返回内容。';
+    if (choices == null || choices.isEmpty) {
+      const answer = 'The model returned no content.';
+      return ModelCallResult(
+        answer: answer,
+        debugTrace: ModelDebugTrace(
+          requestJson: requestDebugJson,
+          responseJson: responseDebugJson,
+          processedAnswer: answer,
+        ),
+      );
+    }
+
     final message = choices.first['message'] as Map<String, dynamic>?;
-    return message?['content'] as String? ?? '模型没有返回内容。';
+    final answer =
+        message?['content'] as String? ?? 'The model returned no content.';
+    return ModelCallResult(
+      answer: answer,
+      debugTrace: ModelDebugTrace(
+        requestJson: requestDebugJson,
+        responseJson: responseDebugJson,
+        processedAnswer: answer,
+      ),
+    );
   }
 
   String _systemPrompt() {
-    final factText = _facts.isEmpty ? '无' : _facts.map((fact) => '- $fact').join('\n');
+    final factText =
+        _facts.isEmpty ? '无' : _facts.map((fact) => '- $fact').join('\n');
     return '''
 你是一个大模型 Agent 算法面试陪练。请用中文回答，结构清晰，优先给出面试可表达的答案。
 
@@ -285,7 +415,8 @@ ${_knowledge.promptContext}
   Future<void> _clearChat() async {
     setState(() {
       _messages = [
-        const ChatMessage(role: 'assistant', content: '对话已清空。继续问我一个 Agent 面试题吧。'),
+        const ChatMessage(
+            role: 'assistant', content: '对话已清空。继续问我一个 Agent 面试题吧。'),
       ];
     });
     await _store.saveMessages(_messages);
@@ -329,7 +460,8 @@ ${_knowledge.promptContext}
                 controller: _scrollController,
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
                 itemCount: _messages.length,
-                itemBuilder: (context, index) => MessageBubble(message: _messages[index]),
+                itemBuilder: (context, index) =>
+                    MessageBubble(message: _messages[index]),
               ),
             ),
             _Composer(
@@ -373,7 +505,8 @@ class _Header extends StatelessWidget {
             child: const Center(
               child: Text(
                 'AI',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+                style:
+                    TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
               ),
             ),
           ),
@@ -390,13 +523,22 @@ class _Header extends StatelessWidget {
                   connected ? '直连模型 · $model' : '本地 Demo · 本机记忆',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: connected ? const Color(0xFF1F7A63) : const Color(0xFF69707D)),
+                  style: TextStyle(
+                      color: connected
+                          ? const Color(0xFF1F7A63)
+                          : const Color(0xFF69707D)),
                 ),
               ],
             ),
           ),
-          IconButton(onPressed: onClear, icon: const Icon(Icons.delete_outline), tooltip: '清空对话'),
-          IconButton(onPressed: onSettings, icon: const Icon(Icons.tune), tooltip: '设置'),
+          IconButton(
+              onPressed: onClear,
+              icon: const Icon(Icons.delete_outline),
+              tooltip: '清空对话'),
+          IconButton(
+              onPressed: onSettings,
+              icon: const Icon(Icons.tune),
+              tooltip: '设置'),
         ],
       ),
     );
@@ -443,12 +585,15 @@ class MessageBubble extends StatelessWidget {
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.86),
+        constraints:
+            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.86),
         margin: const EdgeInsets.symmetric(vertical: 7),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           color: isUser ? const Color(0xFF1F2328) : Colors.white,
-          border: Border.all(color: isUser ? const Color(0xFF1F2328) : const Color(0xFFDED8CB)),
+          border: Border.all(
+              color:
+                  isUser ? const Color(0xFF1F2328) : const Color(0xFFDED8CB)),
           borderRadius: BorderRadius.circular(13),
           boxShadow: const [
             BoxShadow(
@@ -458,13 +603,95 @@ class MessageBubble extends StatelessWidget {
             ),
           ],
         ),
-        child: Text(
-          message.content,
-          style: TextStyle(
-            color: isUser ? Colors.white : const Color(0xFF1F2328),
-            height: 1.58,
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              message.content,
+              style: TextStyle(
+                color: isUser ? Colors.white : const Color(0xFF1F2328),
+                height: 1.58,
+              ),
+            ),
+            if (!isUser && message.debugTrace != null) ...[
+              const SizedBox(height: 10),
+              ModelDebugPanel(trace: message.debugTrace!),
+            ],
+          ],
         ),
+      ),
+    );
+  }
+}
+
+class ModelDebugPanel extends StatelessWidget {
+  const ModelDebugPanel({required this.trace, super.key});
+
+  final ModelDebugTrace trace;
+
+  @override
+  Widget build(BuildContext context) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: EdgeInsets.zero,
+        title: const Text(
+          '查看模型原始 JSON / 处理流程',
+          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+        ),
+        children: [
+          _DebugBlock(title: '发送给模型', value: trace.requestJson),
+          _DebugBlock(title: '模型原始返回', value: trace.responseJson),
+          _DebugBlock(title: '最终展示内容', value: trace.processedAnswer),
+        ],
+      ),
+    );
+  }
+}
+
+class _DebugBlock extends StatelessWidget {
+  const _DebugBlock({
+    required this.title,
+    required this.value,
+  });
+
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style:
+                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(maxHeight: 240),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF6F8FA),
+              border: Border.all(color: const Color(0xFFD0D7DE)),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                value,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  height: 1.45,
+                  color: Color(0xFF24292F),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -484,7 +711,8 @@ class _Composer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.fromLTRB(16, 10, 16, 10 + MediaQuery.of(context).padding.bottom),
+      padding: EdgeInsets.fromLTRB(
+          16, 10, 16, 10 + MediaQuery.of(context).padding.bottom),
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: Color(0xFFDED8CB))),
         color: Color(0xEEF4F1EA),
@@ -562,17 +790,20 @@ class _SettingsSheetState extends State<SettingsSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.fromLTRB(18, 0, 18, 18 + MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.fromLTRB(
+          18, 0, 18, 18 + MediaQuery.of(context).viewInsets.bottom),
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('模型与本地记忆', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+            const Text('模型与本地记忆',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
             const SizedBox(height: 14),
             TextField(
               controller: _baseUrl,
-              decoration: const InputDecoration(labelText: 'DeepSeek / OpenAI-compatible Base URL'),
+              decoration: const InputDecoration(
+                  labelText: 'DeepSeek / OpenAI-compatible Base URL'),
             ),
             const SizedBox(height: 10),
             TextField(
@@ -618,8 +849,12 @@ class _SettingsSheetState extends State<SettingsSheet> {
                     Navigator.of(context).pop(
                       _SettingsResult(
                         settings: ModelSettings(
-                          baseUrl: _baseUrl.text.trim().isEmpty ? defaultModelBaseUrl : _baseUrl.text.trim(),
-                          model: _model.text.trim().isEmpty ? defaultModelName : _model.text.trim(),
+                          baseUrl: _baseUrl.text.trim().isEmpty
+                              ? defaultModelBaseUrl
+                              : _baseUrl.text.trim(),
+                          model: _model.text.trim().isEmpty
+                              ? defaultModelName
+                              : _model.text.trim(),
                           apiKey: _apiKey.text.trim(),
                         ),
                         facts: _facts,
@@ -681,13 +916,19 @@ $transformer
 
   String _pick(String question) {
     final lower = question.toLowerCase();
-    if (lower.contains('transformer') || lower.contains('kv') || question.contains('长上下文优化')) {
+    if (lower.contains('transformer') ||
+        lower.contains('kv') ||
+        question.contains('长上下文优化')) {
       return 'transformer';
     }
-    if (lower.contains('long') || question.contains('取代') || question.contains('长上下文')) {
+    if (lower.contains('long') ||
+        question.contains('取代') ||
+        question.contains('长上下文')) {
       return 'long-rag';
     }
-    if (lower.contains('rag') || question.contains('向量') || question.contains('检索')) {
+    if (lower.contains('rag') ||
+        question.contains('向量') ||
+        question.contains('检索')) {
       return 'rag';
     }
     if (question.contains('记忆') || question.contains('画像')) {
@@ -716,6 +957,18 @@ $transformer
 
   static const transformer =
       'Transformer 处理超长上下文的核心瓶颈是自注意力 O(n^2) 计算复杂度、KV Cache 显存与带宽压力、显存 IO 瓶颈以及位置编码外推能力。常见优化包括 FlashAttention、GQA、PagedAttention、RoPE Scaling、ALiBi 等。';
+}
+
+String _prettyJson(Object value) {
+  return const JsonEncoder.withIndent('  ').convert(value);
+}
+
+String _prettyJsonOrText(String value) {
+  try {
+    return _prettyJson(jsonDecode(value));
+  } catch (_) {
+    return value;
+  }
 }
 
 extension _TakeLast<T> on List<T> {
