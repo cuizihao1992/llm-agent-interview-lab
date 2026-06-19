@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+const defaultModelBaseUrl = 'https://api.deepseek.com/v1';
+const defaultModelName = 'deepseek-chat';
+
 void main() {
   runApp(const AgentInterviewApp());
 }
@@ -117,8 +120,8 @@ class LocalStore {
   Future<ModelSettings> loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     return ModelSettings(
-      baseUrl: prefs.getString(_baseUrlKey) ?? 'https://api.openai.com/v1',
-      model: prefs.getString(_modelKey) ?? 'gpt-4.1-mini',
+      baseUrl: prefs.getString(_baseUrlKey) ?? defaultModelBaseUrl,
+      model: prefs.getString(_modelKey) ?? defaultModelName,
       apiKey: prefs.getString(_apiKeyKey) ?? '',
     );
   }
@@ -147,8 +150,8 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ChatMessage> _messages = [];
   List<String> _facts = [];
   ModelSettings _settings = const ModelSettings(
-    baseUrl: 'https://api.openai.com/v1',
-    model: 'gpt-4.1-mini',
+    baseUrl: defaultModelBaseUrl,
+    model: defaultModelName,
     apiKey: '',
   );
   bool _sending = false;
@@ -569,7 +572,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
             const SizedBox(height: 14),
             TextField(
               controller: _baseUrl,
-              decoration: const InputDecoration(labelText: 'OpenAI-compatible Base URL'),
+              decoration: const InputDecoration(labelText: 'DeepSeek / OpenAI-compatible Base URL'),
             ),
             const SizedBox(height: 10),
             TextField(
@@ -615,8 +618,8 @@ class _SettingsSheetState extends State<SettingsSheet> {
                     Navigator.of(context).pop(
                       _SettingsResult(
                         settings: ModelSettings(
-                          baseUrl: _baseUrl.text.trim().isEmpty ? 'https://api.openai.com/v1' : _baseUrl.text.trim(),
-                          model: _model.text.trim().isEmpty ? 'gpt-4.1-mini' : _model.text.trim(),
+                          baseUrl: _baseUrl.text.trim().isEmpty ? defaultModelBaseUrl : _baseUrl.text.trim(),
+                          model: _model.text.trim().isEmpty ? defaultModelName : _model.text.trim(),
                           apiKey: _apiKey.text.trim(),
                         ),
                         facts: _facts,

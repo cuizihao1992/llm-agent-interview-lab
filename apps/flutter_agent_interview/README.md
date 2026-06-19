@@ -8,7 +8,8 @@
 - 不做 RAG 请求。
 - 对话、用户画像、模型设置保存在本机。
 - 未配置 API Key 时使用内置知识 Demo 回答。
-- 配置 OpenAI-compatible API Key 后，App 直连 `/chat/completions`。
+- 默认模型配置为 DeepSeek：`https://api.deepseek.com/v1` + `deepseek-chat`。
+- 配置 DeepSeek / OpenAI-compatible API Key 后，App 直连 `/chat/completions`。
 
 ## 生成 Android / iOS 工程
 
@@ -57,5 +58,4 @@ flutter build ios --release
 
 ## 注意
 
-前端直连模型会把 API Key 保存在设备本地，适合个人学习 MVP。公开给多人使用时，应增加后端代理。
-
+前端直连模型会把 API Key 保存在设备本地，适合个人学习 MVP。公开给多人使用时，应增加后端代理。不要把 API Key 写入源码或提交到仓库。
