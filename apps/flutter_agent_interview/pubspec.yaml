@@ -1,7 +1,7 @@
 name: flutter_agent_interview
 description: Local-first LLM Agent interview chatbot.
 publish_to: "none"
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -19,4 +19,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-

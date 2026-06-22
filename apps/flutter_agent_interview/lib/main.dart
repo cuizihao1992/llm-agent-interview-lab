@@ -109,6 +109,73 @@ class ModelCallException implements Exception {
   String toString() => message;
 }
 
+class MemoryFact {
+  const MemoryFact({
+    required this.id,
+    required this.category,
+    required this.value,
+    required this.source,
+    required this.updatedAt,
+    required this.confidence,
+    this.enabled = true,
+  });
+
+  final String id;
+  final String category;
+  final String value;
+  final String source;
+  final DateTime updatedAt;
+  final double confidence;
+  final bool enabled;
+
+  String get promptLine =>
+      '[$category] $value (confidence=${confidence.toStringAsFixed(2)}, source=$source)';
+
+  MemoryFact copyWith({
+    String? id,
+    String? category,
+    String? value,
+    String? source,
+    DateTime? updatedAt,
+    double? confidence,
+    bool? enabled,
+  }) {
+    return MemoryFact(
+      id: id ?? this.id,
+      category: category ?? this.category,
+      value: value ?? this.value,
+      source: source ?? this.source,
+      updatedAt: updatedAt ?? this.updatedAt,
+      confidence: confidence ?? this.confidence,
+      enabled: enabled ?? this.enabled,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'category': category,
+        'value': value,
+        'source': source,
+        'updatedAt': updatedAt.toIso8601String(),
+        'confidence': confidence,
+        'enabled': enabled,
+      };
+
+  factory MemoryFact.fromJson(Map<String, dynamic> json) {
+    return MemoryFact(
+      id: json['id'] as String? ??
+          DateTime.now().microsecondsSinceEpoch.toString(),
+      category: json['category'] as String? ?? 'profile',
+      value: json['value'] as String? ?? '',
+      source: json['source'] as String? ?? 'manual',
+      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+          DateTime.now(),
+      confidence: (json['confidence'] as num?)?.toDouble() ?? 0.8,
+      enabled: json['enabled'] as bool? ?? true,
+    );
+  }
+}
+
 class ModelSettings {
   const ModelSettings({
     required this.baseUrl,
@@ -138,6 +205,7 @@ class ModelSettings {
 class LocalStore {
   static const _messagesKey = 'messages';
   static const _factsKey = 'facts';
+  static const _memoryFactsKey = 'memory_facts';
   static const _baseUrlKey = 'model_base_url';
   static const _modelKey = 'model_name';
   static const _apiKeyKey = 'api_key';
@@ -173,6 +241,41 @@ class LocalStore {
     await prefs.setStringList(_factsKey, facts);
   }
 
+  Future<List<MemoryFact>> loadMemoryFacts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_memoryFactsKey);
+    if (raw != null) {
+      final decoded = jsonDecode(raw) as List<dynamic>;
+      return decoded
+          .map((item) => MemoryFact.fromJson(item as Map<String, dynamic>))
+          .where((fact) => fact.value.trim().isNotEmpty)
+          .toList();
+    }
+
+    final legacyFacts = prefs.getStringList(_factsKey) ?? [];
+    return legacyFacts
+        .where((fact) => fact.trim().isNotEmpty)
+        .map(
+          (fact) => MemoryFact(
+            id: 'legacy-${fact.hashCode}',
+            category: 'profile',
+            value: fact,
+            source: 'manual',
+            updatedAt: DateTime.now(),
+            confidence: 0.9,
+          ),
+        )
+        .toList();
+  }
+
+  Future<void> saveMemoryFacts(List<MemoryFact> facts) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _memoryFactsKey,
+      jsonEncode(facts.map((fact) => fact.toJson()).toList()),
+    );
+  }
+
   Future<ModelSettings> loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     return ModelSettings(
@@ -204,7 +307,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _knowledge = const LocalKnowledge();
 
   List<ChatMessage> _messages = [];
-  List<String> _facts = [];
+  List<MemoryFact> _memories = [];
   ModelSettings _settings = const ModelSettings(
     baseUrl: defaultModelBaseUrl,
     model: defaultModelName,
@@ -220,7 +323,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _load() async {
     final messages = await _store.loadMessages();
-    final facts = await _store.loadFacts();
+    final memories = await _store.loadMemoryFacts();
     final settings = await _store.loadSettings();
     setState(() {
       _messages = messages.isEmpty
@@ -232,7 +335,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ]
           : messages;
-      _facts = facts;
+      _memories = memories;
       _settings = settings;
     });
     if (messages.isEmpty) {
@@ -273,7 +376,7 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       } on ModelCallException catch (error) {
         final fallback =
-            'Model call failed: ${error.message}\n\nFallback local demo:\n${_knowledge.demoAnswer(question, _facts)}';
+            'Model call failed: ${error.message}\n\nFallback local demo:\n${_knowledge.demoAnswer(question, _enabledMemories)}';
         assistantMessage = ChatMessage(
           role: 'assistant',
           content: fallback,
@@ -287,22 +390,27 @@ class _ChatScreenState extends State<ChatScreen> {
         assistantMessage = ChatMessage(
           role: 'assistant',
           content:
-              'Model call failed: $error\n\nFallback local demo:\n${_knowledge.demoAnswer(question, _facts)}',
+              'Model call failed: $error\n\nFallback local demo:\n${_knowledge.demoAnswer(question, _enabledMemories)}',
         );
       }
     } else {
       assistantMessage = ChatMessage(
-          role: 'assistant', content: _knowledge.demoAnswer(question, _facts));
+          role: 'assistant',
+          content: _knowledge.demoAnswer(question, _enabledMemories));
     }
+
+    final nextMemories = _mergeMemories(_memories, _extractMemories(question));
 
     setState(() {
       _messages = [
         ..._messages.sublist(0, _messages.length - 1),
         assistantMessage,
       ];
+      _memories = nextMemories;
       _sending = false;
     });
     await _store.saveMessages(_messages);
+    await _store.saveMemoryFacts(_memories);
     _scrollToBottom();
   }
 
@@ -382,8 +490,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String _systemPrompt() {
-    final factText =
-        _facts.isEmpty ? '无' : _facts.map((fact) => '- $fact').join('\n');
+    final factText = _enabledMemories.isEmpty
+        ? 'none'
+        : _enabledMemories.map((fact) => '- ${fact.promptLine}').join('\n');
     return '''
 你是一个大模型 Agent 算法面试陪练。请用中文回答，结构清晰，优先给出面试可表达的答案。
 
@@ -429,16 +538,92 @@ ${_knowledge.promptContext}
       showDragHandle: true,
       builder: (context) => SettingsSheet(
         settings: _settings,
-        facts: _facts,
+        memories: _memories,
       ),
     );
     if (result == null) return;
     setState(() {
       _settings = result.settings;
-      _facts = result.facts;
+      _memories = result.memories;
     });
     await _store.saveSettings(result.settings);
-    await _store.saveFacts(result.facts);
+    await _store.saveMemoryFacts(result.memories);
+  }
+
+  List<MemoryFact> get _enabledMemories =>
+      _memories.where((memory) => memory.enabled).toList();
+
+  List<MemoryFact> _extractMemories(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return const [];
+
+    final lower = trimmed.toLowerCase();
+    final extracted = <MemoryFact>[];
+
+    void remember(String category, String value, double confidence) {
+      extracted.add(
+        MemoryFact(
+          id: '${DateTime.now().microsecondsSinceEpoch}-${value.hashCode}',
+          category: category,
+          value: value,
+          source: 'auto',
+          updatedAt: DateTime.now(),
+          confidence: confidence,
+        ),
+      );
+    }
+
+    if (lower.contains('rag') ||
+        lower.contains('agent') ||
+        lower.contains('transformer') ||
+        lower.contains('long context')) {
+      remember('learning_topic', 'Asked about: $trimmed', 0.62);
+    }
+
+    if (trimmed.contains('面试') ||
+        lower.contains('interview') ||
+        lower.contains('offer')) {
+      remember('goal', 'Preparing for LLM/Agent interview topics', 0.78);
+    }
+
+    if (trimmed.contains('不懂') ||
+        trimmed.contains('不会') ||
+        lower.contains('confused')) {
+      remember('weakness', 'Needs simpler explanation for: $trimmed', 0.7);
+    }
+
+    if (trimmed.contains('喜欢') ||
+        trimmed.contains('希望') ||
+        lower.contains('prefer')) {
+      remember('preference', trimmed, 0.72);
+    }
+
+    return extracted;
+  }
+
+  List<MemoryFact> _mergeMemories(
+    List<MemoryFact> current,
+    List<MemoryFact> incoming,
+  ) {
+    if (incoming.isEmpty) return current;
+    final merged = [...current];
+    for (final next in incoming) {
+      final duplicateIndex = merged.indexWhere((memory) =>
+          memory.category == next.category &&
+          memory.value.trim().toLowerCase() == next.value.trim().toLowerCase());
+      if (duplicateIndex >= 0) {
+        merged[duplicateIndex] = merged[duplicateIndex].copyWith(
+          updatedAt: DateTime.now(),
+          confidence: next.confidence > merged[duplicateIndex].confidence
+              ? next.confidence
+              : merged[duplicateIndex].confidence,
+        );
+      } else {
+        merged.add(next);
+      }
+    }
+    merged.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return merged.length > 60 ? merged.take(60).toList() : merged;
   }
 
   @override
@@ -751,12 +936,12 @@ class _Composer extends StatelessWidget {
 class SettingsSheet extends StatefulWidget {
   const SettingsSheet({
     required this.settings,
-    required this.facts,
+    required this.memories,
     super.key,
   });
 
   final ModelSettings settings;
-  final List<String> facts;
+  final List<MemoryFact> memories;
 
   @override
   State<SettingsSheet> createState() => _SettingsSheetState();
@@ -767,7 +952,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
   late final TextEditingController _model;
   late final TextEditingController _apiKey;
   final _fact = TextEditingController();
-  late List<String> _facts;
+  late List<MemoryFact> _memories;
 
   @override
   void initState() {
@@ -775,7 +960,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
     _baseUrl = TextEditingController(text: widget.settings.baseUrl);
     _model = TextEditingController(text: widget.settings.model);
     _apiKey = TextEditingController(text: widget.settings.apiKey);
-    _facts = [...widget.facts];
+    _memories = [...widget.memories];
   }
 
   @override
@@ -823,17 +1008,34 @@ class _SettingsSheetState extends State<SettingsSheet> {
               onSubmitted: (_) => _addFact(),
             ),
             const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final fact in _facts)
-                  InputChip(
-                    label: Text(fact),
-                    onDeleted: () => setState(() => _facts.remove(fact)),
-                  ),
-              ],
-            ),
+            if (_memories.isEmpty)
+              const Text(
+                'No local memories yet.',
+                style: TextStyle(color: Color(0xFF69707D)),
+              )
+            else
+              Column(
+                children: [
+                  for (final memory in _memories)
+                    MemoryFactTile(
+                      memory: memory,
+                      onToggle: (enabled) {
+                        setState(() {
+                          final index = _memories
+                              .indexWhere((item) => item.id == memory.id);
+                          if (index >= 0) {
+                            _memories[index] =
+                                _memories[index].copyWith(enabled: enabled);
+                          }
+                        });
+                      },
+                      onDelete: () {
+                        setState(() => _memories
+                            .removeWhere((item) => item.id == memory.id));
+                      },
+                    ),
+                ],
+              ),
             const SizedBox(height: 10),
             const Text(
               '当前版本不用后端，不做 RAG 请求。设置、对话和记忆都保存在当前设备。配置 API Key 后，App 会直连大模型接口。',
@@ -857,7 +1059,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
                               : _model.text.trim(),
                           apiKey: _apiKey.text.trim(),
                         ),
-                        facts: _facts,
+                        memories: _memories,
                       ),
                     );
                   },
@@ -875,20 +1077,95 @@ class _SettingsSheetState extends State<SettingsSheet> {
     final value = _fact.text.trim();
     if (value.isEmpty) return;
     setState(() {
-      _facts.add(value);
+      _memories.insert(
+        0,
+        MemoryFact(
+          id: 'manual-${DateTime.now().microsecondsSinceEpoch}',
+          category: 'profile',
+          value: value,
+          source: 'manual',
+          updatedAt: DateTime.now(),
+          confidence: 0.95,
+        ),
+      );
       _fact.clear();
     });
+  }
+}
+
+class MemoryFactTile extends StatelessWidget {
+  const MemoryFactTile({
+    required this.memory,
+    required this.onToggle,
+    required this.onDelete,
+    super.key,
+  });
+
+  final MemoryFact memory;
+  final ValueChanged<bool> onToggle;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: memory.enabled ? Colors.white : const Color(0xFFF6F8FA),
+        border: Border.all(color: const Color(0xFFDED8CB)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Switch(
+            value: memory.enabled,
+            onChanged: onToggle,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  memory.value,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: memory.enabled
+                        ? const Color(0xFF1F2328)
+                        : const Color(0xFF69707D),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${memory.category} · ${memory.source} · ${memory.confidence.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    color: Color(0xFF69707D),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onDelete,
+            icon: const Icon(Icons.close),
+            tooltip: 'Delete memory',
+          ),
+        ],
+      ),
+    );
   }
 }
 
 class _SettingsResult {
   const _SettingsResult({
     required this.settings,
-    required this.facts,
+    required this.memories,
   });
 
   final ModelSettings settings;
-  final List<String> facts;
+  final List<MemoryFact> memories;
 }
 
 class LocalKnowledge {
@@ -908,9 +1185,11 @@ $longRag
 $transformer
 ''';
 
-  String demoAnswer(String question, List<String> facts) {
+  String demoAnswer(String question, List<MemoryFact> facts) {
     final key = _pick(question);
-    final factHint = facts.isEmpty ? '' : '\n\n结合你的本地画像：${facts.join('；')}';
+    final factHint = facts.isEmpty
+        ? ''
+        : '\n\nLocal memories used: ${facts.map((fact) => fact.value).join('; ')}';
     return '${_content(key)}$factHint\n\n面试表达建议：先讲核心矛盾，再拆系统结构，最后补工程取舍。';
   }
 
