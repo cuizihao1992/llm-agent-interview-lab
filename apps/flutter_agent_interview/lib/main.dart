@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -112,6 +113,26 @@ class ModelCallException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class KnowledgeArticle {
+  const KnowledgeArticle({
+    required this.id,
+    required this.title,
+    required this.content,
+  });
+
+  final String id;
+  final String title;
+  final String content;
+
+  factory KnowledgeArticle.fromJson(Map<String, dynamic> json) {
+    return KnowledgeArticle(
+      id: json['id'] as String,
+      title: json['title'] as String,
+      content: json['content'] as String,
+    );
+  }
 }
 
 class RetrievedKnowledge {
@@ -336,7 +357,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _store = LocalStore();
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
-  final _knowledge = const LocalKnowledge();
+  LocalKnowledge _knowledge = LocalKnowledge.fallback();
 
   List<ChatMessage> _messages = [];
   List<MemoryFact> _memories = [];
@@ -357,6 +378,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final messages = await _store.loadMessages();
     final memories = await _store.loadMemoryFacts();
     final settings = await _store.loadSettings();
+    final knowledge = await LocalKnowledge.load();
     setState(() {
       _messages = messages.isEmpty
           ? [
@@ -369,6 +391,7 @@ class _ChatScreenState extends State<ChatScreen> {
           : messages;
       _memories = memories;
       _settings = settings;
+      _knowledge = knowledge;
     });
     if (messages.isEmpty) {
       await _store.saveMessages(_messages);
@@ -1082,7 +1105,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
             const SizedBox(height: 14),
             TextField(
               controller: _fact,
-              decoration: const InputDecoration(labelText: '添加用户画像事实'),
+              decoration: const InputDecoration(labelText: '????????'),
               onSubmitted: (_) => _addFact(),
             ),
             const SizedBox(height: 8),
@@ -1116,7 +1139,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
               ),
             const SizedBox(height: 10),
             const Text(
-              '当前版本不用后端，不做 RAG 请求。设置、对话和记忆都保存在当前设备。配置 API Key 后，App 会直连大模型接口。',
+              '?????????????????????????????????? API Key ??App ?????????',
               style: TextStyle(color: Color(0xFF69707D), height: 1.5),
             ),
             const SizedBox(height: 18),
@@ -1247,18 +1270,65 @@ class _SettingsResult {
 }
 
 class LocalKnowledge {
-  const LocalKnowledge();
+  const LocalKnowledge(this.articles);
+
+  final List<KnowledgeArticle> articles;
+
+  factory LocalKnowledge.fallback() {
+    return const LocalKnowledge([
+      KnowledgeArticle(
+        id: 'memory',
+        title: 'Long-term AI memory',
+        content:
+            'Layered memory includes short-term dialogue, structured user profile facts, and long-term episodic memories. Facts use structured storage while context uses semantic recall.',
+      ),
+      KnowledgeArticle(
+        id: 'rag',
+        title: 'RAG vector data engineering',
+        content:
+            'A RAG pipeline covers parsing, cleaning, metadata, semantic chunking, embedding, indexing, hybrid retrieval, reranking, generation, and evaluation.',
+      ),
+      KnowledgeArticle(
+        id: 'long-rag',
+        title: 'Long context and RAG',
+        content:
+            'Long context and RAG are complementary. RAG filters broad data cheaply, and long-context models deeply reason over selected evidence.',
+      ),
+      KnowledgeArticle(
+        id: 'transformer',
+        title: 'Transformer long-context bottlenecks',
+        content:
+            'Long-context bottlenecks include quadratic attention, KV cache memory pressure, IO bandwidth, and position extrapolation. Optimizations include FlashAttention, GQA, PagedAttention, and RoPE scaling.',
+      ),
+    ]);
+  }
+
+  static Future<LocalKnowledge> load() async {
+    try {
+      final raw = await rootBundle.loadString('assets/knowledge_base.json');
+      final decoded = jsonDecode(raw) as List<dynamic>;
+      return LocalKnowledge(
+        decoded
+            .map((item) =>
+                KnowledgeArticle.fromJson(item as Map<String, dynamic>))
+            .toList(),
+      );
+    } catch (_) {
+      return LocalKnowledge.fallback();
+    }
+  }
 
   List<RetrievedKnowledge> retrieve(String question, {int topK = 4}) {
     final queryVector = _hashEmbedding(question);
-    final scored = _knowledgeChunks()
+    final scored = _knowledgeChunks(articles)
         .map((chunk) =>
             MapEntry(chunk, _cosineSimilarity(queryVector, chunk.vector)))
         .where((entry) => entry.value > 0)
         .toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
-    final selected = scored.isEmpty ? _fallbackChunks() : scored.take(topK);
+    final selected =
+        scored.isEmpty ? _fallbackChunks(articles) : scored.take(topK);
     return selected
         .map(
           (entry) => RetrievedKnowledge(
@@ -1272,19 +1342,11 @@ class LocalKnowledge {
         .toList();
   }
 
-  String get promptContext => '''
-[memory]
-$memory
-
-[rag]
-$rag
-
-[long-rag]
-$longRag
-
-[transformer]
-$transformer
-''';
+  String get promptContext {
+    return articles
+        .map((article) => '[${article.id}]\n${article.content}')
+        .join('\n\n');
+  }
 
   String demoAnswer(
     String question,
@@ -1292,75 +1354,63 @@ $transformer
     List<RetrievedKnowledge> retrievedKnowledge,
   ) {
     final key = _pick(question);
+    final base = _content(key);
     final factHint = facts.isEmpty
         ? ''
         : '\n\nLocal memories used: ${facts.map((fact) => fact.value).join('; ')}';
     final retrievedHint = retrievedKnowledge.isEmpty
         ? ''
-        : '\n\nLocal knowledge used: ${retrievedKnowledge.map((item) => '${item.title}(${item.score})').join('; ')}';
-    return '${_content(key)}$factHint$retrievedHint\n\nInterview answer tip: start with the core conflict, then explain system design, and end with engineering tradeoffs.';
+        : '\n\nLocal knowledge used: ${retrievedKnowledge.map((item) => '${item.title}(${item.score.toStringAsFixed(3)})').join('; ')}';
+    return '$base$factHint$retrievedHint\n\nInterview answer tip: start with the core conflict, then explain system design, and end with engineering tradeoffs.';
   }
 
   String _pick(String question) {
     final lower = question.toLowerCase();
     if (lower.contains('transformer') ||
         lower.contains('kv') ||
-        question.contains('长上下文优化')) {
+        lower.contains('attention') ||
+        question.contains('??????') ||
+        question.contains('??')) {
       return 'transformer';
     }
     if (lower.contains('long') ||
-        question.contains('取代') ||
-        question.contains('长上下文')) {
+        lower.contains('context') ||
+        question.contains('??') ||
+        question.contains('????')) {
       return 'long-rag';
     }
     if (lower.contains('rag') ||
-        question.contains('向量') ||
-        question.contains('检索')) {
+        lower.contains('vector') ||
+        lower.contains('embedding') ||
+        question.contains('??') ||
+        question.contains('??')) {
       return 'rag';
     }
-    if (question.contains('记忆') || question.contains('画像')) {
+    if (lower.contains('memory') ||
+        question.contains('??') ||
+        question.contains('??')) {
       return 'memory';
     }
-    return 'rag';
+    return retrievedDefaultId;
   }
+
+  String get retrievedDefaultId => articles.isEmpty ? 'rag' : articles.first.id;
 
   String _content(String key) {
-    return switch (key) {
-      'memory' => memory,
-      'long-rag' => longRag,
-      'transformer' => transformer,
-      _ => rag,
-    };
+    return articles
+        .firstWhere(
+          (article) => article.id == key,
+          orElse: () => articles.isEmpty
+              ? LocalKnowledge.fallback().articles.first
+              : articles.first,
+        )
+        .content;
   }
-
-  static const memory =
-      '长期陪伴型 AI 不应把所有历史塞进 prompt。更稳的方案是分层记忆：近期多轮对话作为短期记忆；用户身份、偏好、目标等事实抽取成结构化画像；闲聊、项目背景、感悟等内容作为长期情景记忆。生成时按需召回，更新时用异步任务做事实抽取、冲突合并和遗忘。';
-
-  static const rag =
-      'RAG 要按数据工程链路来设计：先解析 PDF、网页、Markdown 等文档并清洗噪音，再提取元数据；切片时按标题、段落和语义边界切分，保留重叠；向量化后写入向量库；检索阶段用向量 + 关键词混合检索，再用 reranker 重排；最后用召回率、引用准确性、幻觉率、延迟和成本做闭环评估。';
-
-  static const longRag =
-      '长上下文不会简单取代 RAG。RAG 的价值是从海量资料里低成本、低延迟、可权限控制地筛选相关内容；长上下文模型适合对筛选后的高质量材料精读和跨文档推理。未来更现实的是 Long RAG：先召回，再精读。';
-
-  static const transformer =
-      'Transformer 处理超长上下文的核心瓶颈是自注意力 O(n^2) 计算复杂度、KV Cache 显存与带宽压力、显存 IO 瓶颈以及位置编码外推能力。常见优化包括 FlashAttention、GQA、PagedAttention、RoPE Scaling、ALiBi 等。';
 }
 
 const _embeddingDimensions = 96;
 const _chunkSize = 240;
 const _chunkOverlap = 48;
-
-class _KnowledgeDocument {
-  const _KnowledgeDocument({
-    required this.id,
-    required this.title,
-    required this.content,
-  });
-
-  final String id;
-  final String title;
-  final String content;
-}
 
 class _KnowledgeChunk {
   const _KnowledgeChunk({
@@ -1378,50 +1428,30 @@ class _KnowledgeChunk {
   final List<double> vector;
 }
 
-List<MapEntry<_KnowledgeChunk, double>> _fallbackChunks() {
-  final fallback = _knowledgeChunks().firstWhere(
+List<MapEntry<_KnowledgeChunk, double>> _fallbackChunks(
+  List<KnowledgeArticle> articles,
+) {
+  final chunks = _knowledgeChunks(articles);
+  final fallback = chunks.firstWhere(
     (chunk) => chunk.source == 'rag',
-    orElse: () => _knowledgeChunks().first,
+    orElse: () => chunks.first,
   );
   return [MapEntry(fallback, 0.001)];
 }
 
-List<_KnowledgeChunk> _knowledgeChunks() {
-  const documents = [
-    _KnowledgeDocument(
-      id: 'memory',
-      title: 'Memory mechanism',
-      content: LocalKnowledge.memory,
-    ),
-    _KnowledgeDocument(
-      id: 'rag',
-      title: 'RAG vector data engineering',
-      content: LocalKnowledge.rag,
-    ),
-    _KnowledgeDocument(
-      id: 'long-rag',
-      title: 'Long context and RAG',
-      content: LocalKnowledge.longRag,
-    ),
-    _KnowledgeDocument(
-      id: 'transformer',
-      title: 'Transformer long context bottlenecks',
-      content: LocalKnowledge.transformer,
-    ),
-  ];
-
+List<_KnowledgeChunk> _knowledgeChunks(List<KnowledgeArticle> articles) {
   final chunks = <_KnowledgeChunk>[];
-  for (final document in documents) {
-    final parts = _splitIntoChunks(document.content);
+  for (final article in articles) {
+    final parts = _splitIntoChunks(article.content);
     for (var index = 0; index < parts.length; index += 1) {
       final content = parts[index];
       chunks.add(
         _KnowledgeChunk(
-          id: '${document.id}:$index',
-          title: document.title,
-          source: document.id,
+          id: '${article.id}:$index',
+          title: article.title,
+          source: article.id,
           content: content,
-          vector: _hashEmbedding('${document.title}\n$content'),
+          vector: _hashEmbedding('${article.title}\n$content'),
         ),
       );
     }
