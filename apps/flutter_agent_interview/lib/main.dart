@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -117,23 +118,27 @@ class RetrievedKnowledge {
   const RetrievedKnowledge({
     required this.id,
     required this.title,
+    required this.source,
     required this.content,
     required this.score,
   });
 
   final String id;
   final String title;
+  final String source;
   final String content;
-  final int score;
+  final double score;
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
+        'source': source,
         'score': score,
         'content': content,
       };
 
-  String get promptBlock => '[$title score=$score]\n$content';
+  String get promptBlock =>
+      '[$title source=$source score=${score.toStringAsFixed(3)}]\n$content';
 }
 
 class MemoryFact {
@@ -1244,100 +1249,22 @@ class _SettingsResult {
 class LocalKnowledge {
   const LocalKnowledge();
 
-  List<RetrievedKnowledge> retrieve(String question, {int topK = 3}) {
-    final lower = question.toLowerCase();
-    final candidates = [
-      const _KnowledgeCandidate(
-        id: 'memory',
-        title: 'Memory mechanism',
-        content: memory,
-        keywords: [
-          'memory',
-          'profile',
-          'preference',
-          'remember',
-          'agent',
-          '记忆',
-          '画像',
-          '偏好',
-          '长期陪伴'
-        ],
-      ),
-      const _KnowledgeCandidate(
-        id: 'rag',
-        title: 'RAG vector data engineering',
-        content: rag,
-        keywords: [
-          'rag',
-          'vector',
-          'embedding',
-          'chunk',
-          'retrieval',
-          'rerank',
-          '向量',
-          '检索',
-          '切片',
-          '重排'
-        ],
-      ),
-      const _KnowledgeCandidate(
-        id: 'long-rag',
-        title: 'Long context and RAG',
-        content: longRag,
-        keywords: [
-          'long',
-          'context',
-          'rag',
-          'token',
-          'cost',
-          'latency',
-          '长上下文',
-          '取代',
-          '成本',
-          '延迟'
-        ],
-      ),
-      const _KnowledgeCandidate(
-        id: 'transformer',
-        title: 'Transformer long context bottlenecks',
-        content: transformer,
-        keywords: [
-          'transformer',
-          'attention',
-          'kv',
-          'flashattention',
-          'gqa',
-          'pagedattention',
-          'rope',
-          '长文本',
-          '显存'
-        ],
-      ),
-    ];
-
-    final scored = candidates
-        .map((candidate) => MapEntry(candidate, candidate.score(lower)))
+  List<RetrievedKnowledge> retrieve(String question, {int topK = 4}) {
+    final queryVector = _hashEmbedding(question);
+    final scored = _knowledgeChunks()
+        .map((chunk) =>
+            MapEntry(chunk, _cosineSimilarity(queryVector, chunk.vector)))
         .where((entry) => entry.value > 0)
         .toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
-    if (scored.isEmpty) {
-      return [
-        const RetrievedKnowledge(
-          id: 'rag',
-          title: 'RAG vector data engineering',
-          content: rag,
-          score: 1,
-        ),
-      ];
-    }
-
-    return scored
-        .take(topK)
+    final selected = scored.isEmpty ? _fallbackChunks() : scored.take(topK);
+    return selected
         .map(
           (entry) => RetrievedKnowledge(
             id: entry.key.id,
             title: entry.key.title,
+            source: entry.key.source,
             content: entry.key.content,
             score: entry.value,
           ),
@@ -1419,28 +1346,145 @@ $transformer
       'Transformer 处理超长上下文的核心瓶颈是自注意力 O(n^2) 计算复杂度、KV Cache 显存与带宽压力、显存 IO 瓶颈以及位置编码外推能力。常见优化包括 FlashAttention、GQA、PagedAttention、RoPE Scaling、ALiBi 等。';
 }
 
-class _KnowledgeCandidate {
-  const _KnowledgeCandidate({
+const _embeddingDimensions = 96;
+const _chunkSize = 240;
+const _chunkOverlap = 48;
+
+class _KnowledgeDocument {
+  const _KnowledgeDocument({
     required this.id,
     required this.title,
     required this.content,
-    required this.keywords,
   });
 
   final String id;
   final String title;
   final String content;
-  final List<String> keywords;
+}
 
-  int score(String lowerQuestion) {
-    var total = 0;
-    for (final keyword in keywords) {
-      if (lowerQuestion.contains(keyword.toLowerCase())) {
-        total += keyword.length > 3 ? 2 : 1;
-      }
+class _KnowledgeChunk {
+  const _KnowledgeChunk({
+    required this.id,
+    required this.title,
+    required this.source,
+    required this.content,
+    required this.vector,
+  });
+
+  final String id;
+  final String title;
+  final String source;
+  final String content;
+  final List<double> vector;
+}
+
+List<MapEntry<_KnowledgeChunk, double>> _fallbackChunks() {
+  final fallback = _knowledgeChunks().firstWhere(
+    (chunk) => chunk.source == 'rag',
+    orElse: () => _knowledgeChunks().first,
+  );
+  return [MapEntry(fallback, 0.001)];
+}
+
+List<_KnowledgeChunk> _knowledgeChunks() {
+  const documents = [
+    _KnowledgeDocument(
+      id: 'memory',
+      title: 'Memory mechanism',
+      content: LocalKnowledge.memory,
+    ),
+    _KnowledgeDocument(
+      id: 'rag',
+      title: 'RAG vector data engineering',
+      content: LocalKnowledge.rag,
+    ),
+    _KnowledgeDocument(
+      id: 'long-rag',
+      title: 'Long context and RAG',
+      content: LocalKnowledge.longRag,
+    ),
+    _KnowledgeDocument(
+      id: 'transformer',
+      title: 'Transformer long context bottlenecks',
+      content: LocalKnowledge.transformer,
+    ),
+  ];
+
+  final chunks = <_KnowledgeChunk>[];
+  for (final document in documents) {
+    final parts = _splitIntoChunks(document.content);
+    for (var index = 0; index < parts.length; index += 1) {
+      final content = parts[index];
+      chunks.add(
+        _KnowledgeChunk(
+          id: '${document.id}:$index',
+          title: document.title,
+          source: document.id,
+          content: content,
+          vector: _hashEmbedding('${document.title}\n$content'),
+        ),
+      );
     }
-    return total;
   }
+  return chunks;
+}
+
+List<String> _splitIntoChunks(String text) {
+  final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (normalized.isEmpty) return const [];
+  if (normalized.length <= _chunkSize) return [normalized];
+
+  final chunks = <String>[];
+  var start = 0;
+  while (start < normalized.length) {
+    final end = math.min(start + _chunkSize, normalized.length);
+    chunks.add(normalized.substring(start, end).trim());
+    if (end == normalized.length) break;
+    start = math.max(0, end - _chunkOverlap);
+  }
+  return chunks;
+}
+
+List<double> _hashEmbedding(String text) {
+  final vector = List<double>.filled(_embeddingDimensions, 0);
+  for (final token in _tokens(text)) {
+    final hash = token.hashCode;
+    final index = hash.abs() % _embeddingDimensions;
+    vector[index] += hash.isEven ? 1 : -1;
+  }
+  return vector;
+}
+
+Iterable<String> _tokens(String text) sync* {
+  final lower = text.toLowerCase();
+  final asciiTerms = RegExp(r'[a-z0-9_+#.-]+').allMatches(lower);
+  for (final match in asciiTerms) {
+    final value = match.group(0);
+    if (value != null && value.length > 1) yield value;
+  }
+
+  final compact = lower.replaceAll(RegExp(r'\s+'), '');
+  for (var i = 0; i < compact.length; i += 1) {
+    final unit = compact.codeUnitAt(i);
+    if (unit <= 127) continue;
+    yield compact.substring(i, i + 1);
+    if (i + 1 < compact.length && compact.codeUnitAt(i + 1) > 127) {
+      yield compact.substring(i, i + 2);
+    }
+  }
+}
+
+double _cosineSimilarity(List<double> left, List<double> right) {
+  var dot = 0.0;
+  var leftNorm = 0.0;
+  var rightNorm = 0.0;
+  for (var i = 0; i < left.length; i += 1) {
+    dot += left[i] * right[i];
+    leftNorm += left[i] * left[i];
+    rightNorm += right[i] * right[i];
+  }
+  if (leftNorm == 0 || rightNorm == 0) return 0;
+  return dot / (math.sqrt(leftNorm) * math.sqrt(rightNorm));
 }
 
 String _prettyJson(Object value) {
