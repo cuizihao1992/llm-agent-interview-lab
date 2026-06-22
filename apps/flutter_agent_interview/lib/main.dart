@@ -67,16 +67,19 @@ class ModelDebugTrace {
   const ModelDebugTrace({
     required this.requestJson,
     required this.responseJson,
+    required this.retrievedKnowledgeJson,
     required this.processedAnswer,
   });
 
   final String requestJson;
   final String responseJson;
+  final String retrievedKnowledgeJson;
   final String processedAnswer;
 
   Map<String, dynamic> toJson() => {
         'requestJson': requestJson,
         'responseJson': responseJson,
+        'retrievedKnowledgeJson': retrievedKnowledgeJson,
         'processedAnswer': processedAnswer,
       };
 
@@ -84,6 +87,7 @@ class ModelDebugTrace {
     return ModelDebugTrace(
       requestJson: json['requestJson'] as String? ?? '',
       responseJson: json['responseJson'] as String? ?? '',
+      retrievedKnowledgeJson: json['retrievedKnowledgeJson'] as String? ?? '',
       processedAnswer: json['processedAnswer'] as String? ?? '',
     );
   }
@@ -107,6 +111,29 @@ class ModelCallException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class RetrievedKnowledge {
+  const RetrievedKnowledge({
+    required this.id,
+    required this.title,
+    required this.content,
+    required this.score,
+  });
+
+  final String id;
+  final String title;
+  final String content;
+  final int score;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'score': score,
+        'content': content,
+      };
+
+  String get promptBlock => '[$title score=$score]\n$content';
 }
 
 class MemoryFact {
@@ -365,10 +392,11 @@ class _ChatScreenState extends State<ChatScreen> {
     _controller.clear();
     _scrollToBottom();
 
+    final retrievedKnowledge = _knowledge.retrieve(question);
     late final ChatMessage assistantMessage;
     if (_settings.hasApiKey) {
       try {
-        final result = await _callModel();
+        final result = await _callModel(retrievedKnowledge);
         assistantMessage = ChatMessage(
           role: 'assistant',
           content: result.answer,
@@ -376,13 +404,14 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       } on ModelCallException catch (error) {
         final fallback =
-            'Model call failed: ${error.message}\n\nFallback local demo:\n${_knowledge.demoAnswer(question, _enabledMemories)}';
+            'Model call failed: ${error.message}\n\nFallback local demo:\n${_knowledge.demoAnswer(question, _enabledMemories, retrievedKnowledge)}';
         assistantMessage = ChatMessage(
           role: 'assistant',
           content: fallback,
           debugTrace: ModelDebugTrace(
             requestJson: error.debugTrace.requestJson,
             responseJson: error.debugTrace.responseJson,
+            retrievedKnowledgeJson: error.debugTrace.retrievedKnowledgeJson,
             processedAnswer: fallback,
           ),
         );
@@ -390,13 +419,34 @@ class _ChatScreenState extends State<ChatScreen> {
         assistantMessage = ChatMessage(
           role: 'assistant',
           content:
-              'Model call failed: $error\n\nFallback local demo:\n${_knowledge.demoAnswer(question, _enabledMemories)}',
+              'Model call failed: $error\n\nFallback local demo:\n${_knowledge.demoAnswer(question, _enabledMemories, retrievedKnowledge)}',
         );
       }
     } else {
       assistantMessage = ChatMessage(
           role: 'assistant',
-          content: _knowledge.demoAnswer(question, _enabledMemories));
+          content: _knowledge.demoAnswer(
+            question,
+            _enabledMemories,
+            retrievedKnowledge,
+          ),
+          debugTrace: ModelDebugTrace(
+            requestJson: _prettyJson({
+              'mode': 'local-demo',
+              'question': question,
+              'enabled_memories':
+                  _enabledMemories.map((memory) => memory.toJson()).toList(),
+            }),
+            responseJson: _prettyJson({'mode': 'local-demo'}),
+            retrievedKnowledgeJson: _prettyJson(
+              retrievedKnowledge.map((item) => item.toJson()).toList(),
+            ),
+            processedAnswer: _knowledge.demoAnswer(
+              question,
+              _enabledMemories,
+              retrievedKnowledge,
+            ),
+          ));
     }
 
     final nextMemories = _mergeMemories(_memories, _extractMemories(question));
@@ -414,7 +464,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
-  Future<ModelCallResult> _callModel() async {
+  Future<ModelCallResult> _callModel(
+    List<RetrievedKnowledge> retrievedKnowledge,
+  ) async {
     final endpoint =
         '${_settings.baseUrl.replaceFirst(RegExp(r'/$'), '')}/chat/completions';
     final conversation = _messages
@@ -423,7 +475,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final requestBody = {
       'model': _settings.model,
       'messages': [
-        {'role': 'system', 'content': _systemPrompt()},
+        {'role': 'system', 'content': _systemPrompt(retrievedKnowledge)},
         ...conversation.takeLast(8).map((message) => {
               'role': message.role,
               'content': message.content,
@@ -457,6 +509,9 @@ class _ChatScreenState extends State<ChatScreen> {
         ModelDebugTrace(
           requestJson: requestDebugJson,
           responseJson: responseDebugJson,
+          retrievedKnowledgeJson: _prettyJson(
+            retrievedKnowledge.map((item) => item.toJson()).toList(),
+          ),
           processedAnswer: '',
         ),
       );
@@ -471,6 +526,9 @@ class _ChatScreenState extends State<ChatScreen> {
         debugTrace: ModelDebugTrace(
           requestJson: requestDebugJson,
           responseJson: responseDebugJson,
+          retrievedKnowledgeJson: _prettyJson(
+            retrievedKnowledge.map((item) => item.toJson()).toList(),
+          ),
           processedAnswer: answer,
         ),
       );
@@ -484,29 +542,38 @@ class _ChatScreenState extends State<ChatScreen> {
       debugTrace: ModelDebugTrace(
         requestJson: requestDebugJson,
         responseJson: responseDebugJson,
+        retrievedKnowledgeJson: _prettyJson(
+          retrievedKnowledge.map((item) => item.toJson()).toList(),
+        ),
         processedAnswer: answer,
       ),
     );
   }
 
-  String _systemPrompt() {
+  String _systemPrompt(List<RetrievedKnowledge> retrievedKnowledge) {
     final factText = _enabledMemories.isEmpty
         ? 'none'
         : _enabledMemories.map((fact) => '- ${fact.promptLine}').join('\n');
+    final retrievedText = retrievedKnowledge.isEmpty
+        ? 'none'
+        : retrievedKnowledge.map((item) => item.promptBlock).join('\n\n');
     return '''
-你是一个大模型 Agent 算法面试陪练。请用中文回答，结构清晰，优先给出面试可表达的答案。
+You are an LLM Agent algorithm interview coach. Answer in Chinese with a clear interview-ready structure.
 
-本地用户画像：
+Local user memories:
 $factText
 
-内置知识库：
+Local knowledge retrieved for this question:
+$retrievedText
+
+Built-in knowledge base:
 ${_knowledge.promptContext}
 
-要求：
-1. 先讲核心矛盾。
-2. 再拆系统结构。
-3. 最后补工程取舍。
-4. 不要声称你做了 RAG 检索；当前版本只使用内置知识和本地记忆。
+Requirements:
+1. Start with the core conflict.
+2. Break down the system design.
+3. End with engineering tradeoffs.
+4. Use retrieved local knowledge when relevant, but do not invent external sources.
 ''';
   }
 
@@ -827,6 +894,12 @@ class ModelDebugPanel extends StatelessWidget {
         ),
         children: [
           _DebugBlock(title: '发送给模型', value: trace.requestJson),
+          _DebugBlock(
+            title: '本地知识检索结果',
+            value: trace.retrievedKnowledgeJson.isEmpty
+                ? '[]'
+                : trace.retrievedKnowledgeJson,
+          ),
           _DebugBlock(title: '模型原始返回', value: trace.responseJson),
           _DebugBlock(title: '最终展示内容', value: trace.processedAnswer),
         ],
@@ -1171,6 +1244,107 @@ class _SettingsResult {
 class LocalKnowledge {
   const LocalKnowledge();
 
+  List<RetrievedKnowledge> retrieve(String question, {int topK = 3}) {
+    final lower = question.toLowerCase();
+    final candidates = [
+      const _KnowledgeCandidate(
+        id: 'memory',
+        title: 'Memory mechanism',
+        content: memory,
+        keywords: [
+          'memory',
+          'profile',
+          'preference',
+          'remember',
+          'agent',
+          '记忆',
+          '画像',
+          '偏好',
+          '长期陪伴'
+        ],
+      ),
+      const _KnowledgeCandidate(
+        id: 'rag',
+        title: 'RAG vector data engineering',
+        content: rag,
+        keywords: [
+          'rag',
+          'vector',
+          'embedding',
+          'chunk',
+          'retrieval',
+          'rerank',
+          '向量',
+          '检索',
+          '切片',
+          '重排'
+        ],
+      ),
+      const _KnowledgeCandidate(
+        id: 'long-rag',
+        title: 'Long context and RAG',
+        content: longRag,
+        keywords: [
+          'long',
+          'context',
+          'rag',
+          'token',
+          'cost',
+          'latency',
+          '长上下文',
+          '取代',
+          '成本',
+          '延迟'
+        ],
+      ),
+      const _KnowledgeCandidate(
+        id: 'transformer',
+        title: 'Transformer long context bottlenecks',
+        content: transformer,
+        keywords: [
+          'transformer',
+          'attention',
+          'kv',
+          'flashattention',
+          'gqa',
+          'pagedattention',
+          'rope',
+          '长文本',
+          '显存'
+        ],
+      ),
+    ];
+
+    final scored = candidates
+        .map((candidate) => MapEntry(candidate, candidate.score(lower)))
+        .where((entry) => entry.value > 0)
+        .toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    if (scored.isEmpty) {
+      return [
+        const RetrievedKnowledge(
+          id: 'rag',
+          title: 'RAG vector data engineering',
+          content: rag,
+          score: 1,
+        ),
+      ];
+    }
+
+    return scored
+        .take(topK)
+        .map(
+          (entry) => RetrievedKnowledge(
+            id: entry.key.id,
+            title: entry.key.title,
+            content: entry.key.content,
+            score: entry.value,
+          ),
+        )
+        .toList();
+  }
+
   String get promptContext => '''
 [memory]
 $memory
@@ -1185,12 +1359,19 @@ $longRag
 $transformer
 ''';
 
-  String demoAnswer(String question, List<MemoryFact> facts) {
+  String demoAnswer(
+    String question,
+    List<MemoryFact> facts,
+    List<RetrievedKnowledge> retrievedKnowledge,
+  ) {
     final key = _pick(question);
     final factHint = facts.isEmpty
         ? ''
         : '\n\nLocal memories used: ${facts.map((fact) => fact.value).join('; ')}';
-    return '${_content(key)}$factHint\n\n面试表达建议：先讲核心矛盾，再拆系统结构，最后补工程取舍。';
+    final retrievedHint = retrievedKnowledge.isEmpty
+        ? ''
+        : '\n\nLocal knowledge used: ${retrievedKnowledge.map((item) => '${item.title}(${item.score})').join('; ')}';
+    return '${_content(key)}$factHint$retrievedHint\n\nInterview answer tip: start with the core conflict, then explain system design, and end with engineering tradeoffs.';
   }
 
   String _pick(String question) {
@@ -1236,6 +1417,30 @@ $transformer
 
   static const transformer =
       'Transformer 处理超长上下文的核心瓶颈是自注意力 O(n^2) 计算复杂度、KV Cache 显存与带宽压力、显存 IO 瓶颈以及位置编码外推能力。常见优化包括 FlashAttention、GQA、PagedAttention、RoPE Scaling、ALiBi 等。';
+}
+
+class _KnowledgeCandidate {
+  const _KnowledgeCandidate({
+    required this.id,
+    required this.title,
+    required this.content,
+    required this.keywords,
+  });
+
+  final String id;
+  final String title;
+  final String content;
+  final List<String> keywords;
+
+  int score(String lowerQuestion) {
+    var total = 0;
+    for (final keyword in keywords) {
+      if (lowerQuestion.contains(keyword.toLowerCase())) {
+        total += keyword.length > 3 ? 2 : 1;
+      }
+    }
+    return total;
+  }
 }
 
 String _prettyJson(Object value) {
