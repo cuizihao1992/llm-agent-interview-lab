@@ -162,6 +162,81 @@ class RetrievedKnowledge {
       '[$title source=$source score=${score.toStringAsFixed(3)}]\n$content';
 }
 
+class RetrievalSettings {
+  const RetrievalSettings({
+    required this.mode,
+  });
+
+  final String mode;
+
+  bool get enabled => mode != 'disabled';
+
+  EmbeddingProvider get provider {
+    return switch (mode) {
+      'disabled' => const DisabledEmbeddingProvider(),
+      _ => const LocalHashEmbeddingProvider(),
+    };
+  }
+
+  Map<String, dynamic> toJson() => {
+        'mode': mode,
+      };
+
+  factory RetrievalSettings.fromJson(Map<String, dynamic> json) {
+    final mode = json['mode'] as String? ?? 'local_hash';
+    return RetrievalSettings(
+        mode: mode == 'disabled' ? 'disabled' : 'local_hash');
+  }
+}
+
+abstract class EmbeddingProvider {
+  const EmbeddingProvider();
+
+  String get providerId;
+  String get modelName;
+  int get dimension;
+
+  List<double> embed(String text);
+
+  Map<String, dynamic> metadata() => {
+        'embedding_provider': providerId,
+        'embedding_model': modelName,
+        'dimension': dimension,
+      };
+}
+
+class LocalHashEmbeddingProvider extends EmbeddingProvider {
+  const LocalHashEmbeddingProvider();
+
+  @override
+  String get providerId => 'local_hash';
+
+  @override
+  String get modelName => 'hashing-trick-v1';
+
+  @override
+  int get dimension => _embeddingDimensions;
+
+  @override
+  List<double> embed(String text) => _hashEmbedding(text);
+}
+
+class DisabledEmbeddingProvider extends EmbeddingProvider {
+  const DisabledEmbeddingProvider();
+
+  @override
+  String get providerId => 'disabled';
+
+  @override
+  String get modelName => 'none';
+
+  @override
+  int get dimension => 0;
+
+  @override
+  List<double> embed(String text) => const [];
+}
+
 class MemoryFact {
   const MemoryFact({
     required this.id,
@@ -262,6 +337,7 @@ class LocalStore {
   static const _baseUrlKey = 'model_base_url';
   static const _modelKey = 'model_name';
   static const _apiKeyKey = 'api_key';
+  static const _retrievalSettingsKey = 'retrieval_settings';
 
   Future<List<ChatMessage>> loadMessages() async {
     final prefs = await SharedPreferences.getInstance();
@@ -344,6 +420,18 @@ class LocalStore {
     await prefs.setString(_modelKey, settings.model);
     await prefs.setString(_apiKeyKey, settings.apiKey);
   }
+
+  Future<RetrievalSettings> loadRetrievalSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_retrievalSettingsKey);
+    if (raw == null) return const RetrievalSettings(mode: 'local_hash');
+    return RetrievalSettings.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+  }
+
+  Future<void> saveRetrievalSettings(RetrievalSettings settings) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_retrievalSettingsKey, jsonEncode(settings.toJson()));
+  }
 }
 
 class ChatScreen extends StatefulWidget {
@@ -366,6 +454,8 @@ class _ChatScreenState extends State<ChatScreen> {
     model: defaultModelName,
     apiKey: '',
   );
+  RetrievalSettings _retrievalSettings =
+      const RetrievalSettings(mode: 'local_hash');
   bool _sending = false;
 
   @override
@@ -378,6 +468,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final messages = await _store.loadMessages();
     final memories = await _store.loadMemoryFacts();
     final settings = await _store.loadSettings();
+    final retrievalSettings = await _store.loadRetrievalSettings();
     final knowledge = await LocalKnowledge.load();
     setState(() {
       _messages = messages.isEmpty
@@ -391,6 +482,7 @@ class _ChatScreenState extends State<ChatScreen> {
           : messages;
       _memories = memories;
       _settings = settings;
+      _retrievalSettings = retrievalSettings;
       _knowledge = knowledge;
     });
     if (messages.isEmpty) {
@@ -420,7 +512,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _controller.clear();
     _scrollToBottom();
 
-    final retrievedKnowledge = _knowledge.retrieve(question);
+    final retrievedKnowledge = _knowledge.retrieve(
+      question,
+      settings: _retrievalSettings,
+    );
     late final ChatMessage assistantMessage;
     if (_settings.hasApiKey) {
       try {
@@ -466,9 +561,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   _enabledMemories.map((memory) => memory.toJson()).toList(),
             }),
             responseJson: _prettyJson({'mode': 'local-demo'}),
-            retrievedKnowledgeJson: _prettyJson(
-              retrievedKnowledge.map((item) => item.toJson()).toList(),
-            ),
+            retrievedKnowledgeJson: _retrievalTraceJson(retrievedKnowledge),
             processedAnswer: _knowledge.demoAnswer(
               question,
               _enabledMemories,
@@ -537,9 +630,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ModelDebugTrace(
           requestJson: requestDebugJson,
           responseJson: responseDebugJson,
-          retrievedKnowledgeJson: _prettyJson(
-            retrievedKnowledge.map((item) => item.toJson()).toList(),
-          ),
+          retrievedKnowledgeJson: _retrievalTraceJson(retrievedKnowledge),
           processedAnswer: '',
         ),
       );
@@ -554,9 +645,7 @@ class _ChatScreenState extends State<ChatScreen> {
         debugTrace: ModelDebugTrace(
           requestJson: requestDebugJson,
           responseJson: responseDebugJson,
-          retrievedKnowledgeJson: _prettyJson(
-            retrievedKnowledge.map((item) => item.toJson()).toList(),
-          ),
+          retrievedKnowledgeJson: _retrievalTraceJson(retrievedKnowledge),
           processedAnswer: answer,
         ),
       );
@@ -570,12 +659,21 @@ class _ChatScreenState extends State<ChatScreen> {
       debugTrace: ModelDebugTrace(
         requestJson: requestDebugJson,
         responseJson: responseDebugJson,
-        retrievedKnowledgeJson: _prettyJson(
-          retrievedKnowledge.map((item) => item.toJson()).toList(),
-        ),
+        retrievedKnowledgeJson: _retrievalTraceJson(retrievedKnowledge),
         processedAnswer: answer,
       ),
     );
+  }
+
+  String _retrievalTraceJson(List<RetrievedKnowledge> retrievedKnowledge) {
+    final provider = _retrievalSettings.provider;
+    return _prettyJson({
+      ...provider.metadata(),
+      'retrieval_mode': _retrievalSettings.mode,
+      'enabled': _retrievalSettings.enabled,
+      'retrieved_chunks':
+          retrievedKnowledge.map((item) => item.toJson()).toList(),
+    });
   }
 
   String _systemPrompt(List<RetrievedKnowledge> retrievedKnowledge) {
@@ -633,15 +731,18 @@ Requirements:
       showDragHandle: true,
       builder: (context) => SettingsSheet(
         settings: _settings,
+        retrievalSettings: _retrievalSettings,
         memories: _memories,
       ),
     );
     if (result == null) return;
     setState(() {
       _settings = result.settings;
+      _retrievalSettings = result.retrievalSettings;
       _memories = result.memories;
     });
     await _store.saveSettings(result.settings);
+    await _store.saveRetrievalSettings(result.retrievalSettings);
     await _store.saveMemoryFacts(result.memories);
   }
 
@@ -1037,11 +1138,13 @@ class _Composer extends StatelessWidget {
 class SettingsSheet extends StatefulWidget {
   const SettingsSheet({
     required this.settings,
+    required this.retrievalSettings,
     required this.memories,
     super.key,
   });
 
   final ModelSettings settings;
+  final RetrievalSettings retrievalSettings;
   final List<MemoryFact> memories;
 
   @override
@@ -1053,6 +1156,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
   late final TextEditingController _model;
   late final TextEditingController _apiKey;
   final _fact = TextEditingController();
+  late String _retrievalMode;
   late List<MemoryFact> _memories;
 
   @override
@@ -1061,6 +1165,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
     _baseUrl = TextEditingController(text: widget.settings.baseUrl);
     _model = TextEditingController(text: widget.settings.model);
     _apiKey = TextEditingController(text: widget.settings.apiKey);
+    _retrievalMode = widget.retrievalSettings.mode;
     _memories = [...widget.memories];
   }
 
@@ -1083,9 +1188,12 @@ class _SettingsSheetState extends State<SettingsSheet> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('模型与本地记忆',
+            const Text('Model, Retrieval and Memory',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
             const SizedBox(height: 14),
+            const Text('Chat model',
+                style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
             TextField(
               controller: _baseUrl,
               decoration: const InputDecoration(
@@ -1094,18 +1202,51 @@ class _SettingsSheetState extends State<SettingsSheet> {
             const SizedBox(height: 10),
             TextField(
               controller: _model,
-              decoration: const InputDecoration(labelText: 'Model'),
+              decoration: const InputDecoration(labelText: 'Chat model'),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: _apiKey,
               obscureText: true,
-              decoration: const InputDecoration(labelText: 'API Key'),
+              decoration: const InputDecoration(labelText: 'Chat API Key'),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 18),
+            const Text('Retrieval embedding',
+                style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              initialValue: _retrievalMode,
+              decoration: const InputDecoration(labelText: 'Retrieval mode'),
+              items: const [
+                DropdownMenuItem(
+                    value: 'local_hash', child: Text('Local Hash')),
+                DropdownMenuItem(value: 'disabled', child: Text('Disabled')),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => _retrievalMode = value);
+              },
+            ),
+            const SizedBox(height: 8),
+            Builder(
+              builder: (context) {
+                final provider =
+                    RetrievalSettings(mode: _retrievalMode).provider;
+                return Text(
+                  'Provider: ${provider.providerId} | Model: ${provider.modelName} | Dimension: ${provider.dimension}',
+                  style:
+                      const TextStyle(color: Color(0xFF69707D), height: 1.45),
+                );
+              },
+            ),
+            const SizedBox(height: 18),
+            const Text('Local memory',
+                style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
             TextField(
               controller: _fact,
-              decoration: const InputDecoration(labelText: '????????'),
+              decoration:
+                  const InputDecoration(labelText: 'Add profile memory'),
               onSubmitted: (_) => _addFact(),
             ),
             const SizedBox(height: 8),
@@ -1139,13 +1280,14 @@ class _SettingsSheetState extends State<SettingsSheet> {
               ),
             const SizedBox(height: 10),
             const Text(
-              '?????????????????????????????????? API Key ??App ?????????',
+              'Settings, chat history, memories, and the local knowledge base stay on this device. The chat API key is only used for direct model calls.',
               style: TextStyle(color: Color(0xFF69707D), height: 1.5),
             ),
             const SizedBox(height: 18),
             Row(
               children: [
-                OutlinedButton(onPressed: _addFact, child: const Text('保存画像')),
+                OutlinedButton(
+                    onPressed: _addFact, child: const Text('Add memory')),
                 const Spacer(),
                 FilledButton(
                   onPressed: () {
@@ -1160,11 +1302,13 @@ class _SettingsSheetState extends State<SettingsSheet> {
                               : _model.text.trim(),
                           apiKey: _apiKey.text.trim(),
                         ),
+                        retrievalSettings:
+                            RetrievalSettings(mode: _retrievalMode),
                         memories: _memories,
                       ),
                     );
                   },
-                  child: const Text('保存设置'),
+                  child: const Text('Save settings'),
                 ),
               ],
             ),
@@ -1262,10 +1406,12 @@ class MemoryFactTile extends StatelessWidget {
 class _SettingsResult {
   const _SettingsResult({
     required this.settings,
+    required this.retrievalSettings,
     required this.memories,
   });
 
   final ModelSettings settings;
+  final RetrievalSettings retrievalSettings;
   final List<MemoryFact> memories;
 }
 
@@ -1318,17 +1464,24 @@ class LocalKnowledge {
     }
   }
 
-  List<RetrievedKnowledge> retrieve(String question, {int topK = 4}) {
-    final queryVector = _hashEmbedding(question);
-    final scored = _knowledgeChunks(articles)
+  List<RetrievedKnowledge> retrieve(
+    String question, {
+    required RetrievalSettings settings,
+    int topK = 4,
+  }) {
+    if (!settings.enabled) return const [];
+    final provider = settings.provider;
+    final queryVector = provider.embed(question);
+    final scored = _knowledgeChunks(articles, provider)
         .map((chunk) =>
             MapEntry(chunk, _cosineSimilarity(queryVector, chunk.vector)))
         .where((entry) => entry.value > 0)
         .toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
-    final selected =
-        scored.isEmpty ? _fallbackChunks(articles) : scored.take(topK);
+    final selected = scored.isEmpty
+        ? _fallbackChunks(articles, provider)
+        : scored.take(topK);
     return selected
         .map(
           (entry) => RetrievedKnowledge(
@@ -1369,26 +1522,26 @@ class LocalKnowledge {
     if (lower.contains('transformer') ||
         lower.contains('kv') ||
         lower.contains('attention') ||
-        question.contains('??????') ||
-        question.contains('??')) {
+        lower.contains('flashattention') ||
+        lower.contains('gqa')) {
       return 'transformer';
     }
     if (lower.contains('long') ||
         lower.contains('context') ||
-        question.contains('??') ||
-        question.contains('????')) {
+        lower.contains('token') ||
+        lower.contains('latency')) {
       return 'long-rag';
     }
     if (lower.contains('rag') ||
         lower.contains('vector') ||
         lower.contains('embedding') ||
-        question.contains('??') ||
-        question.contains('??')) {
+        lower.contains('retrieval') ||
+        lower.contains('rerank')) {
       return 'rag';
     }
     if (lower.contains('memory') ||
-        question.contains('??') ||
-        question.contains('??')) {
+        lower.contains('profile') ||
+        lower.contains('preference')) {
       return 'memory';
     }
     return retrievedDefaultId;
@@ -1430,8 +1583,9 @@ class _KnowledgeChunk {
 
 List<MapEntry<_KnowledgeChunk, double>> _fallbackChunks(
   List<KnowledgeArticle> articles,
+  EmbeddingProvider provider,
 ) {
-  final chunks = _knowledgeChunks(articles);
+  final chunks = _knowledgeChunks(articles, provider);
   final fallback = chunks.firstWhere(
     (chunk) => chunk.source == 'rag',
     orElse: () => chunks.first,
@@ -1439,7 +1593,10 @@ List<MapEntry<_KnowledgeChunk, double>> _fallbackChunks(
   return [MapEntry(fallback, 0.001)];
 }
 
-List<_KnowledgeChunk> _knowledgeChunks(List<KnowledgeArticle> articles) {
+List<_KnowledgeChunk> _knowledgeChunks(
+  List<KnowledgeArticle> articles,
+  EmbeddingProvider provider,
+) {
   final chunks = <_KnowledgeChunk>[];
   for (final article in articles) {
     final parts = _splitIntoChunks(article.content);
@@ -1451,7 +1608,7 @@ List<_KnowledgeChunk> _knowledgeChunks(List<KnowledgeArticle> articles) {
           title: article.title,
           source: article.id,
           content: content,
-          vector: _hashEmbedding('${article.title}\n$content'),
+          vector: provider.embed('${article.title}\n$content'),
         ),
       );
     }
